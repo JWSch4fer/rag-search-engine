@@ -6,40 +6,40 @@ from typing import List
 from pathlib import Path
 import string
 
-# one time download
-import nltk
 
-nltk.download("stopwords")
-from nltk.corpus import stopwords
-from nltk.stem import SnowballStemmer
+# avoid redownloading this package
+def get_nlp():
+    import spacy
+
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError:
+        # Not installed → download once, then load
+        from spacy.cli.download import download
+
+        download("en_core_web_sm")
+        return spacy.load("en_core_web_sm")
 
 
-def remove_stops(tokens: list[str]) -> list[str]:
-    return [t for t in tokens if t.lower() not in stops]
+ROOT = Path(__file__).resolve().parents[1]
 
-
-ROOT = Path(__file__).resolve().parents[1]  # adapt to your tree
-FILE = ROOT / "resources" / "index.faiss"
+_PRECOMPUTED_TITLES = None
 
 
 def basic_search(text: str) -> List[str]:
     """
     Case insensitivity: Convert all text to lowercase
         "The Matrix" becomes "the matrix"
-        "HE IS HERE" becomes "he is here"
     Remove punctuation: We don't care about periods, commas, etc
         "Hello, world!" becomes "hello world"
-        "sci-fi" becomes "scifi"
     Tokenization: Break text into individual words
         "the matrix" becomes ["the", "matrix"]
-        "hello world" becomes ["hello", "world"]
     Stop words: Remove common stop words that don't add much meaning
         ["the", "matrix"] becomes ["matrix"]
-        ["a", "puppy"] becomes ["puppy"]
     Stemming: Keep only the stem of words
         ["running", "jumping"] becomes ["run", "jump"]
-        ["watching", "windmills"] becomes ["watch", "windmill"]
     """
+
     # define path to data
     DATA = ROOT / "data" / "movies.json"
 
@@ -48,33 +48,47 @@ def basic_search(text: str) -> List[str]:
     DROP = "".join(ch for ch in string.punctuation if ch not in KEEP)
     TRANS_SEL = str.maketrans("", "", DROP)
 
-    # define stopword dictionary and stemming
-    SNOW = SnowballStemmer(language="english")
-    STOPWORDS = set(stopwords.words("english"))
-    
-    def sanitize(t: str) -> set[str]:
-        """
-         prep the text
-         case insensitivity
-         remove punctuation
-         stopwords + stemming
-        """
-        t = t.lower().translate(TRANS_SEL)
-        return set(
-                    [SNOW.stem(t) for t in t.split(" ") if t not in STOPWORDS]
-                )
-    
-    sanitized_text = sanitize(text)
+    # predifine spacy function
+    NLP = get_nlp()
+
+    # use cache to speed up search
+    global _PRECOMPUTED_TITLES
+
+    def sanitize_doc(doc) -> set[str]:
+        return {
+            t.lemma_.lower()
+            for t in doc
+            if not t.is_stop and not t.is_punct and not t.is_space
+        }
+
+    def sanitize_text(text: str) -> set[str]:
+        pre = text.lower().translate(TRANS_SEL)
+        return sanitize_doc(NLP(pre))
+
+    # sanatize the query text
+    sanitized_text = sanitize_text(text)
+
+    # 1) load titles
     with DATA.open("r", encoding="utf-8") as file:
         data = json.load(fp=file)
-        results = []
-        for entry in data["movies"]:
-            sanitized_title = sanitize(entry["title"])
-            if bool(sanitized_text & sanitized_title):  # if there is any overlap we return true
-                results.append(entry["title"])
+        titles = [e["title"] for e in data["movies"]]
 
-    return results
+    # 2) precompute title normalization once per process
+    if _PRECOMPUTED_TITLES is None:
+        # pipe over titles in batches; use all cores
+        pre_iter = (t.lower().translate(TRANS_SEL) for t in titles)
+        docs = NLP.pipe(pre_iter, batch_size=256, n_process=-1)
+        norm_sets = [sanitize_doc(d) for d in docs]
+        _PRECOMPUTED_TITLES = list(zip(titles, norm_sets))
 
+    # if there is any overlap we return true
+    # return [title for title, tset in _PRECOMPUTED_TITLES if sanitized_text & tset]
+
+    # return if any part of sanitized text is present at all...
+    def any_substring(qset: set[str], tset: set[str]) -> bool:
+        return any(q and (q in t) for q in qset for t in tset)
+    # more permisive return statement because substrings can now match
+    return [title for title, tset in _PRECOMPUTED_TITLES if any_substring(sanitized_text, tset)]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Keyword Search CLI")

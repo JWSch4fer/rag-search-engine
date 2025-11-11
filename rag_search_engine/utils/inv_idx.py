@@ -1,0 +1,182 @@
+import pickle, gzip, json, time, sys
+from pathlib import Path
+from typing import Callable, Dict, List, Set, Iterator
+from collections import defaultdict
+from sortedcontainers import SortedDict
+
+from rag_search_engine.utils.search import normalize_for_index
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# ________________________________________________________________________________
+# ____________________Inverted Index______________________________________________
+# ________________________________________________________________________________
+
+
+def ddlist() -> Dict[int, List[int]]:
+    """
+    define for nesting default dict and pickle compatibility
+    """
+    return defaultdict(list)
+
+
+class InvertedIndex:
+    """
+    postings: term -> {doc_id -> [positions]}
+    docmap:   doc_id -> raw text (or metadata)
+    """
+
+    INDEX_NAME = "index.pkl"
+    DOCMAP_NAME = "docmap.pkl"
+    META_NAME = "meta.json"
+
+    TITLE_END_TOKEN = "[TITLE_END]"  # field boundary token
+
+    def __init__(
+        self,
+        file_path: Path | str,
+        cache_dir: Path | str = ROOT / "cache",
+        normalizer: Callable[[str], Iterator[List[str]]] = normalize_for_index,
+    ) -> None:
+        self.file_path = Path(file_path)
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._postings: Dict[str, Dict[int, List[int]]] = defaultdict(ddlist)
+        self._docmap: Dict[int, Dict[str, str]] = SortedDict()
+        self._normalizer = normalizer
+        self._built = False
+
+    def __repr__(self) -> str:
+
+        repr = f"--------------------------------------\n"
+        repr += f"Cache directory path: {self.cache_dir}\n"
+        repr += f"Input data file path: {self.file_path}\n"
+        repr += f"--------------------------------------\n"
+        return repr
+
+    # --- accessors ---
+    def index(self) -> Dict[str, Dict[int, List[int]]]:
+        return self._postings
+
+    def docmap(self) -> Dict[int, Dict[str, str]]:
+        return self._docmap
+
+    # def _add_document(self, doc_id: int, title: str, text: str) -> None:
+    #     """
+    #     Index one document:
+    #     - tokenize title and body separately (spaCy)
+    #     - insert a field-boundary token so phrases don’t span title→body
+    #     - record positions
+    #     """
+    #     title_tokens = normalize_for_index(title)
+    #     body_tokens = normalize_for_index(text)
+
+    #     self._docmap[doc_id] = {"title": title, "description": text}
+
+    #     for pos, tok in enumerate(tokens):
+    #         self._postings[tok][doc_id].append(pos)
+
+    # ---- simple (per-doc) build ----
+    def build(self) -> None:
+        """
+        Simple build: iterate JSON list of {id,title,description} and index each.
+        """
+        data = json.loads(self.file_path.read_text(encoding="utf-8"))
+        titles = [t["title"] for t in data["movies"]]
+        descriptions = [t["description"] for t in data["movies"]]
+
+        title_tok_lists = normalize_for_index(titles)
+        body_tok_lists = normalize_for_index(descriptions)
+
+        # create fresh iterator
+        data_iter = iter(data["movies"])
+        for d, t_tokens, b_tokens in zip(data_iter, title_tok_lists, body_tok_lists):
+            doc_id = d["id"]
+            tokens = t_tokens + [self.TITLE_END_TOKEN] + b_tokens
+
+            self._docmap[doc_id] = {
+                "title": d["title"],
+                "description": d["description"],
+            }
+            for pos, tok in enumerate(tokens):
+                self._postings[tok][doc_id].append(pos)
+        self._built = True
+
+    # --- query helpers ---
+    def get_documents(self, term: str) -> List[int]:
+        """
+        Return sorted doc_ids that contain the (normalized) term.
+        """
+        toks = self._normalizer(term)
+        if not toks:
+            return []
+        tok = toks[0]  # treat 'term' as a single token
+        return sorted(self._postings.get(tok, {}).keys())
+
+    # optional: any overlap between token sets
+    def any_token_match(self, query: str, doc_tokens: Set[str]) -> bool:
+        return bool(set(self._normalizer(query)) & doc_tokens)
+
+    # --- persistence (cache) ---
+    def _sig_for_docs(self, docs_path: Path | None) -> dict:
+        """
+        build from a JSON/CSV file, pass that path here when saving.
+        Used to auto-invalidate caches when the source changes.
+        """
+        if not docs_path or not docs_path.exists():
+            return {}
+        st = docs_path.stat()
+        return {
+            "src": str(docs_path),
+            "mtime_ns": int(st.st_mtime_ns),
+            "size": st.st_size,
+        }
+
+    def save(self) -> None:
+        """
+        Save postings + docmap + meta into cache_dir using gzip pickles.
+        """
+        if not self._built and not self._postings:
+            # allow saving incremental states but warn mentally
+            pass
+
+        idx_file = self.cache_dir / self.INDEX_NAME
+        dmap_file = self.cache_dir / self.DOCMAP_NAME
+        meta_file = self.cache_dir / self.META_NAME
+
+        with gzip.open(idx_file, "wb") as f:
+            pickle.dump(self._postings, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with gzip.open(dmap_file, "wb") as f:
+            pickle.dump(self._docmap, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        meta = {
+            "normalizer": getattr(self._normalizer, "__name__", "callable"),
+            "signature_dmap": self._sig_for_docs(dmap_file),
+            "signature_idx": self._sig_for_docs(idx_file),
+            "counts": {"terms": len(self._postings), "docs": len(self._docmap)},
+            "version": 1,
+        }
+        meta_file.write_text(json.dumps(meta, indent=2))
+
+    def load(self) -> bool:
+        """
+        Load postings + docmap from cache_dir if present.
+        Returns True if loaded, False otherwise.
+        """
+        idx_file = self.cache_dir / self.INDEX_NAME
+        dmap_file = self.cache_dir / self.DOCMAP_NAME
+
+        if not idx_file.exists() or not dmap_file.exists():
+            return False
+
+        with gzip.open(idx_file, "rb") as f:
+            self._postings = pickle.load(f)
+        with gzip.open(dmap_file, "rb") as f:
+            self._docmap = pickle.load(f)
+
+        self._built = True
+        return True
+
+
+# ________________________________________________________________________________

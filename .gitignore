@@ -11,3 +11,4 @@ wheels/
 
 # Project files
 data/
+rag_search_engine/cache

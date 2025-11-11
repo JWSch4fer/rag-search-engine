@@ -8,3 +8,8 @@ dependencies = [
     "pip>=25.3",
     "spacy>=3.8.8",
 ]
+
+# Tell setuptools to install the package that lives in ./rag_search_engine
+[tool.setuptools.packages.find]
+where = ["."] #top level, if project is moved into src/ later change this
+include = ["rag_search_engine*"]   # <-- this is the key bit

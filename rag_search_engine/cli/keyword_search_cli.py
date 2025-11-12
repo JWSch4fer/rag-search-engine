@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-import argparse
+import argparse, math
 
-from rag_search_engine.utils.search import basic_search, search_inverted_index
+from rag_search_engine.utils.search import basic_search, calc_idf, search_inverted_index
 from rag_search_engine.utils.inv_idx import InvertedIndex
 
 
@@ -30,7 +30,7 @@ def handle_search(args) -> None:
         docmap = invidx.docmap()
         postings = invidx.index()
         print("Using cached data...")
-        result = search_inverted_index(args.query, postings)
+        result = search_inverted_index(args.query, postings, docmap)
         for doc_idx in result:
             print("{:}. {:}".format(doc_idx, docmap[doc_idx]["title"]))
         return
@@ -39,6 +39,26 @@ def handle_search(args) -> None:
     results = basic_search(args.query.lower())
     for idx, r in enumerate(results):
         print(f"{idx}. {r}")
+
+def handle_frequency(args):
+    invidx = InvertedIndex()
+    if invidx.exists():
+        invidx.load()
+        docmap = invidx.docmap()
+        print("{:} appears {:}".format(args.word,docmap[args.doc_id]["description"].count(args.word)))
+    else:
+        raise Exception("Have to build a cached database first")
+
+def handle_idf(args):
+    invidx = InvertedIndex()
+    if invidx.exists():
+        invidx.load()
+        docmap = invidx.docmap()
+        postings = invidx.index()
+        idf = calc_idf(args.word, postings,docmap)
+    else:
+        raise Exception("Have to build a cached database first")
+
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -50,8 +70,7 @@ def make_parser() -> argparse.ArgumentParser:
     # ________________________________________________________________________________
     build_p = subparsers.add_parser("build", help="Build the inverted index")
     build_p.add_argument(
-        "--data",
-        default="data/movies.json",
+        "data",
         type=str,
         help="Path to source data (default: %(default)s)",
     )
@@ -73,6 +92,26 @@ def make_parser() -> argparse.ArgumentParser:
     # attach handler
     search_p.set_defaults(func=handle_search)
     # ________________________________________________________________________________
+
+    # ________________________________________________________________________________
+    # ____________________frequency of a word_________________________________________
+    # ________________________________________________________________________________
+    search_p = subparsers.add_parser("tf", help="get the frequency of a word")
+    search_p.add_argument("doc_id", type=int, help="doc id to search")
+    search_p.add_argument("word", type=str, help="word to get frequency")
+    # attach handler
+    search_p.set_defaults(func=handle_frequency)
+    # ________________________________________________________________________________
+
+    # ________________________________________________________________________________
+    # ____________________frequency of a word_________________________________________
+    # ________________________________________________________________________________
+    search_p = subparsers.add_parser("idf", help="get the inverse document frequency")
+    search_p.add_argument("word", type=str, help="word to get frequency")
+    # attach handler
+    search_p.set_defaults(func=handle_idf)
+    # ________________________________________________________________________________
+
     args = parser.parse_args()
 
     return parser

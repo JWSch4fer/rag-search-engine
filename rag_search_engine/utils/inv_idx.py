@@ -62,20 +62,6 @@ class InvertedIndex:
     def docmap(self) -> Dict[int, Dict[str, str]]:
         return self._docmap
 
-    # def _add_document(self, doc_id: int, title: str, text: str) -> None:
-    #     """
-    #     Index one document:
-    #     - tokenize title and body separately (spaCy)
-    #     - insert a field-boundary token so phrases don’t span title→body
-    #     - record positions
-    #     """
-    #     title_tokens = normalize_for_index(title)
-    #     body_tokens = normalize_for_index(text)
-
-    #     self._docmap[doc_id] = {"title": title, "description": text}
-
-    #     for pos, tok in enumerate(tokens):
-    #         self._postings[tok][doc_id].append(pos)
 
     # ---- simple (per-doc) build ----
     def build(self) -> None:
@@ -108,19 +94,16 @@ class InvertedIndex:
         self._built = True
 
     # --- query helpers ---
-    def get_documents(self, term: str) -> List[int]:
-        """
-        Return sorted doc_ids that contain the (normalized) term.
-        """
-        toks = self._normalizer(term)
-        if not toks:
-            return []
-        tok = toks[0]  # treat 'term' as a single token
-        return sorted(self._postings.get(tok, {}).keys())
+    # def get_documents(self, term: str) -> List[int]:
+    #     """
+    #     Return sorted doc_ids that contain the (normalized) term.
+    #     """
+    #     toks = self._normalizer(term)
+    #     if not toks:
+    #         return []
+    #     tok = toks[0]  # treat 'term' as a single token
+    #     return sorted(self._postings.get(tok, {}).keys())
 
-    # optional: any overlap between token sets
-    def any_token_match(self, query: str, doc_tokens: Set[str]) -> bool:
-        return bool(set(self._normalizer(query)) & doc_tokens)
 
     # --- persistence (cache) ---
     def _sig_for_docs(self, docs_path: Path | None) -> dict:

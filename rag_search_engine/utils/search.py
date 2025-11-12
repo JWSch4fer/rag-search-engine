@@ -1,7 +1,7 @@
 import json
-from typing import List, Set, Iterable, Iterator
+from typing import List, Set, Iterable, Iterator, Dict
 from pathlib import Path
-import sys
+import re
 
 
 # avoid redownloading this package
@@ -10,21 +10,42 @@ def get_nlp():
     import spacy
 
     try:
-        return spacy.load(
-            "en_core_web_sm", disable=["parser", "ner"]
-        )
+        return spacy.load("en_core_web_sm", disable=["parser", "ner"])
     except OSError:
         # Not installed → download once, then load
         from spacy.cli.download import download
 
         download("en_core_web_sm")
-        return spacy.load(
-            "en_core_web_sm", disable=["parser", "ner"]
-        )
+        return spacy.load("en_core_web_sm", disable=["parser", "ner"])
 
+
+from spacy.tokenizer import Tokenizer
+from spacy.util import compile_infix_regex
 
 # predifine for spacy
 NLP = get_nlp()
+infixes = list(NLP.Defaults.infixes) + [r"(?<=[A-Za-z])\.(?=[A-Za-z])"]
+infix_re = compile_infix_regex(infixes)  # customize spaCy regex for tokens
+
+# Override token_match: keep default, but don't glue alpha.alpha
+orig_token_match = NLP.tokenizer.token_match
+
+
+def custom_token_match(text: str):
+    # If it's exactly letters-dot-letters, let infix split it (return None)
+    if re.fullmatch(r"[A-Za-z]+\.[A-Za-z]+", text):
+        return None
+    return orig_token_match(text) if orig_token_match else None
+
+
+NLP.tokenizer = Tokenizer(
+    NLP.vocab,
+    rules=NLP.tokenizer.rules,
+    prefix_search=NLP.tokenizer.prefix_search,
+    suffix_search=NLP.tokenizer.suffix_search,
+    infix_finditer=infix_re.finditer,
+    token_match=custom_token_match,  # keep URL/email handling
+)
 
 
 # ________________________________________________________________________________
@@ -33,7 +54,7 @@ NLP = get_nlp()
 def normalize_for_index(
     texts: Iterable[str],
     batch_size: int = 256,
-    n_process: int = 1,  #WSL2 doesn't play nice with more processes...
+    n_process: int = 1,  # WSL2 doesn't play nice with more processes...
 ) -> Iterator[List[str]]:
     """
     Yield token lists for each text using spaCy.pipe (fast, parallel).
@@ -46,7 +67,7 @@ def normalize_for_index(
 def normalize_for_query(
     texts: Iterable[str],
     batch_size: int = 256,
-    n_process: int = 1,  #WSL2 doesn't play nice with more processes...
+    n_process: int = 1,  # WSL2 doesn't play nice with more processes...
 ) -> Iterator[Set[str]]:
     """
     return set
@@ -62,12 +83,10 @@ def normalize_for_query(
 
 # ________________________________________________________________________________
 
+
 # ________________________________________________________________________________
 # ____________________Search Algorithm____________________________________________
 # ________________________________________________________________________________
-_PRECOMPUTED_TITLES = None
-
-
 def basic_search(text: str | List[str]) -> List[str]:
     """
     Case insensitivity: Convert all text to lowercase
@@ -105,11 +124,9 @@ def basic_search(text: str | List[str]) -> List[str]:
         data = json.load(fp=file)
         titles = [e["title"] for e in data["movies"]]
 
-    # 2) precompute title normalization once per process
-    if _PRECOMPUTED_TITLES is None:
-        # pipe over titles in batches; use all cores
-        norm_sets = normalize_for_query(titles)
-        _PRECOMPUTED_TITLES = list(zip(titles, norm_sets))
+    # pipe over titles in batches; use all cores
+    norm_sets = normalize_for_query(titles)
+    _PRECOMPUTED_TITLES = list(zip(titles, norm_sets))
 
     # return if any part of sanitized text is present at all...
     def any_substring(qset: set[str], tset: set[str]) -> bool:
@@ -118,6 +135,48 @@ def basic_search(text: str | List[str]) -> List[str]:
 
     # more permisive return statement because substrings can now match
     return [title for title, tset in _PRECOMPUTED_TITLES if any_substring(st, tset)]
+
+
+# ________________________________________________________________________________
+
+# ________________________________________________________________________________
+# ____________________Search Algorithm____________________________________________
+# ________________________________________________________________________________
+
+
+def search_inverted_index(
+    text: str | List[str],
+    postings: Dict[str, Dict[int, List[int]]],
+) -> List[str]:
+    """
+    Case insensitivity: Convert all text to lowercase
+        "The Matrix" becomes "the matrix"
+    Remove punctuation: We don't care about periods, commas, etc
+        "Hello, world!" becomes "hello world"
+    Tokenization: Break text into individual words
+        "the matrix" becomes ["the", "matrix"]
+    Stop words: Remove common stop words that don't add much meaning
+        ["the", "matrix"] becomes ["matrix"]
+    Stemming: Keep only the stem of words
+        ["running", "jumping"] becomes ["run", "jump"]
+    """
+    # ensure title is the proper type
+    match text:
+        case str():
+            data = [text]
+        case list():
+            data = text
+        case _:
+            raise TypeError("text is not the correct type. Expected str or list[str]")
+
+    # sanatize the query text
+    sanitized_text = normalize_for_query(data)
+    first_five = []
+    for bundle in sanitized_text:
+        for word in bundle:
+            if postings.get(word):
+                first_five += list(postings[word].keys())[:5]
+    return first_five
 
 
 # ________________________________________________________________________________

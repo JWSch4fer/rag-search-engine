@@ -35,11 +35,11 @@ class InvertedIndex:
 
     def __init__(
         self,
-        file_path: Path | str,
+        file_path: Path | str | None = None,
         cache_dir: Path | str = ROOT / "cache",
         normalizer: Callable[[str], Iterator[List[str]]] = normalize_for_index,
     ) -> None:
-        self.file_path = Path(file_path)
+        self.file_path = Path(file_path) if file_path else None
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._postings: Dict[str, Dict[int, List[int]]] = defaultdict(ddlist)
@@ -82,6 +82,9 @@ class InvertedIndex:
         """
         Simple build: iterate JSON list of {id,title,description} and index each.
         """
+        if not self.file_path:
+            raise Exception("Need a valid source to build cache")
+
         data = json.loads(self.file_path.read_text(encoding="utf-8"))
         titles = [t["title"] for t in data["movies"]]
         descriptions = [t["description"] for t in data["movies"]]
@@ -94,13 +97,14 @@ class InvertedIndex:
         for d, t_tokens, b_tokens in zip(data_iter, title_tok_lists, body_tok_lists):
             doc_id = d["id"]
             tokens = t_tokens + [self.TITLE_END_TOKEN] + b_tokens
-
             self._docmap[doc_id] = {
                 "title": d["title"],
                 "description": d["description"],
             }
+
             for pos, tok in enumerate(tokens):
                 self._postings[tok][doc_id].append(pos)
+
         self._built = True
 
     # --- query helpers ---
@@ -145,9 +149,9 @@ class InvertedIndex:
         dmap_file = self.cache_dir / self.DOCMAP_NAME
         meta_file = self.cache_dir / self.META_NAME
 
-        with gzip.open(idx_file, "wb") as f:
+        with open(idx_file, "wb") as f:
             pickle.dump(self._postings, f, protocol=pickle.HIGHEST_PROTOCOL)
-        with gzip.open(dmap_file, "wb") as f:
+        with open(dmap_file, "wb") as f:
             pickle.dump(self._docmap, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         meta = {
@@ -170,12 +174,25 @@ class InvertedIndex:
         if not idx_file.exists() or not dmap_file.exists():
             return False
 
-        with gzip.open(idx_file, "rb") as f:
+        with open(idx_file, "rb") as f:
             self._postings = pickle.load(f)
-        with gzip.open(dmap_file, "rb") as f:
+        with open(dmap_file, "rb") as f:
             self._docmap = pickle.load(f)
 
         self._built = True
+        return True
+
+    def exists(self) -> bool:
+        """
+        check postings + docmap from cache_dir if present.
+        Returns True if exist, False otherwise.
+        """
+        idx_file = self.cache_dir / self.INDEX_NAME
+        dmap_file = self.cache_dir / self.DOCMAP_NAME
+
+        if not idx_file.exists() or not dmap_file.exists():
+            return False
+
         return True
 
 

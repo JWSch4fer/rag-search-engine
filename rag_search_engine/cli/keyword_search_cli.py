@@ -1,28 +1,44 @@
 #!/usr/bin/env python3
 
-import argparse, json
+import argparse
 
-from rag_search_engine.utils.search import basic_search
+from rag_search_engine.utils.search import basic_search, search_inverted_index
 from rag_search_engine.utils.inv_idx import InvertedIndex
 
-def handle_build(args):
+
+def handle_build(args) -> None:
     # Put your build logic here
     # e.g., idx = InvertedIndex(...); idx.build(...); idx.save(...)
     print("Building the inverted index...")
     print("force:", args.force, "data:", args.data)
     invidx = InvertedIndex(args.data)
-    if not invidx.load() or args.force:
+    if not invidx.exists() or args.force:
         invidx.build()
         invidx.save()
 
+    # # TODO: check if pkl files match json source
+    # TODO: add option for a partial build?
 
 
-def handle_search(args):
+def handle_search(args) -> None:
     print("Searching for:", args.query)
+    # update so InvertedIndex can be initialized without providing a file path
+    # implement search based on inverted index
+    invidx = InvertedIndex()
+    if invidx.exists():
+        invidx.load()
+        docmap = invidx.docmap()
+        postings = invidx.index()
+        print("Using cached data...")
+        result = search_inverted_index(args.query, postings)
+        for doc_idx in result:
+            print("{:}. {:}".format(doc_idx, docmap[doc_idx]["title"]))
+        return
+
+    print("No cached data, falling back to basic search")
     results = basic_search(args.query.lower())
     for idx, r in enumerate(results):
         print(f"{idx}. {r}")
-
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -34,13 +50,14 @@ def make_parser() -> argparse.ArgumentParser:
     # ________________________________________________________________________________
     build_p = subparsers.add_parser("build", help="Build the inverted index")
     build_p.add_argument(
-        "-d","--data",
-        type=str,
+        "--data",
         default="data/movies.json",
+        type=str,
         help="Path to source data (default: %(default)s)",
     )
     build_p.add_argument(
-        "-f", "--force",
+        "-f",
+        "--force",
         action="store_true",
         help="Rebuild cache even if a cached index is present",
     )
@@ -57,14 +74,16 @@ def make_parser() -> argparse.ArgumentParser:
     search_p.set_defaults(func=handle_search)
     # ________________________________________________________________________________
     args = parser.parse_args()
-    
+
     return parser
+
 
 def main() -> None:
     parser = make_parser()
     args = parser.parse_args()
     # print(sys.argv, args)  # <-- uncomment to debug
     args.func(args)
+
 
 if __name__ == "__main__":
     main()

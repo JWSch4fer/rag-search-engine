@@ -2,7 +2,7 @@
 
 import argparse, math
 
-from rag_search_engine.utils.search import basic_search, calc_idf, search_inverted_index
+from rag_search_engine.utils.search import basic_search, calc_idf, search_inverted_index, calc_tf_idf
 from rag_search_engine.utils.inv_idx import InvertedIndex
 
 
@@ -40,14 +40,20 @@ def handle_search(args) -> None:
     for idx, r in enumerate(results):
         print(f"{idx}. {r}")
 
+
 def handle_frequency(args):
     invidx = InvertedIndex()
     if invidx.exists():
         invidx.load()
         docmap = invidx.docmap()
-        print("{:} appears {:}".format(args.word,docmap[args.doc_id]["description"].count(args.word)))
+        print(
+            "{:} appears {:}".format(
+                args.word, docmap[args.doc_id]["description"].count(args.word)
+            )
+        )
     else:
         raise Exception("Have to build a cached database first")
+
 
 def handle_idf(args):
     invidx = InvertedIndex()
@@ -55,10 +61,22 @@ def handle_idf(args):
         invidx.load()
         docmap = invidx.docmap()
         postings = invidx.index()
-        idf = calc_idf(args.word, postings,docmap)
+        idf = calc_idf(args.word, postings, docmap)
+        print(f"Inverse document frequency of {args.word}: {idf:.2f}")
     else:
         raise Exception("Have to build a cached database first")
 
+
+def handle_tfidf(args):
+    invidx = InvertedIndex()
+    if invidx.exists():
+        invidx.load()
+        docmap = invidx.docmap()
+        postings = invidx.index()
+        tf_idf = calc_tf_idf(args.doc_id, args.word, postings, docmap)
+        print(f"TF-IDF score of '{args.word}' in document '{args.doc_id}': {tf_idf:.2f}")
+    else:
+        raise Exception("Have to build a cached database first")
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -96,24 +114,31 @@ def make_parser() -> argparse.ArgumentParser:
     # ________________________________________________________________________________
     # ____________________frequency of a word_________________________________________
     # ________________________________________________________________________________
-    search_p = subparsers.add_parser("tf", help="get the frequency of a word")
-    search_p.add_argument("doc_id", type=int, help="doc id to search")
-    search_p.add_argument("word", type=str, help="word to get frequency")
+    tf_p = subparsers.add_parser("tf", help="get the frequency of a word")
+    tf_p.add_argument("doc_id", type=int, help="doc id to search")
+    tf_p.add_argument("word", type=str, help="word to get frequency")
     # attach handler
-    search_p.set_defaults(func=handle_frequency)
+    tf_p.set_defaults(func=handle_frequency)
     # ________________________________________________________________________________
 
     # ________________________________________________________________________________
     # ____________________frequency of a word_________________________________________
     # ________________________________________________________________________________
-    search_p = subparsers.add_parser("idf", help="get the inverse document frequency")
-    search_p.add_argument("word", type=str, help="word to get frequency")
+    idf_p = subparsers.add_parser("idf", help="get the inverse document frequency")
+    idf_p.add_argument("word", type=str, help="word to get frequency")
     # attach handler
-    search_p.set_defaults(func=handle_idf)
+    idf_p.set_defaults(func=handle_idf)
     # ________________________________________________________________________________
-
+    # ________________________________________________________________________________
+    # ____________________frequency of a word_________________________________________
+    # ________________________________________________________________________________
+    tfidf_p = subparsers.add_parser("tfidf", help="get the tf-idf score")
+    tfidf_p.add_argument("doc_id", type=int, help="doc id to search")
+    tfidf_p.add_argument("word", type=str, help="word to get frequency")
+    # attach handler
+    tfidf_p.set_defaults(func=handle_tfidf)
+    # ________________________________________________________________________________
     args = parser.parse_args()
-
     return parser
 
 

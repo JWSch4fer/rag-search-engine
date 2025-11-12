@@ -270,9 +270,24 @@ def calc_idf(
     idf = math.log(
         (len(docmap.keys()) + 1) / (len(postings[sanitized_text[0]].keys()) + 1)
     )
-    print(f"Inverse document frequency of {sanitized_text[0]}: {idf:.2f}")
-
     return idf
+
+
+def calc_tf_idf(
+    doc_id: int,
+    text: str,
+    postings: Dict[str, Dict[int, List[int]]],
+    docmap: Dict[int, Dict[str, str]],
+) -> float:
+    # sanatize the query text
+    sanitized_text = normalize_for_query(text)[0]
+    idf = math.log(
+        (len(docmap.keys()) + 1) / (len(postings[sanitized_text].keys()) + 1)
+    )
+    tf = docmap[doc_id]["description"].count(sanitized_text) + docmap[doc_id][
+        "title"
+    ].count(sanitized_text)
+    return tf * idf
 
 
 # ________________________________________________________________________________

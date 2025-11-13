@@ -1,11 +1,11 @@
-import pickle, gzip, json, time, sys
+import pickle, json
 from pathlib import Path
-from typing import Callable, Dict, List, Set, Iterator
+from typing import Callable, Dict, List, Iterator
 from collections import defaultdict
 from sortedcontainers import SortedDict
 
-from rag_search_engine.utils.search import normalize_for_index
-
+# from rag_search_engine.utils.search import normalize_for_index
+from rag_search_engine.utils.utils import load_data, preprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,7 +37,7 @@ class InvertedIndex:
         self,
         file_path: Path | str | None = None,
         cache_dir: Path | str = ROOT / "cache",
-        normalizer: Callable[[str], Iterator[List[str]]] = normalize_for_index,
+        normalizer: Callable[[str], Iterator[List[str]]] = preprocess,
     ) -> None:
         self.file_path = Path(file_path) if file_path else None
         self.cache_dir = Path(cache_dir)
@@ -62,7 +62,6 @@ class InvertedIndex:
     def docmap(self) -> Dict[int, Dict[str, str]]:
         return self._docmap
 
-
     # ---- simple (per-doc) build ----
     def build(self) -> None:
         """
@@ -71,15 +70,16 @@ class InvertedIndex:
         if not self.file_path:
             raise Exception("Need a valid source to build cache")
 
-        data = json.loads(self.file_path.read_text(encoding="utf-8"))
-        titles = [t["title"] for t in data["movies"]]
-        descriptions = [t["description"] for t in data["movies"]]
+        # data = json.loads(self.file_path.read_text(encoding="utf-8"))
+        data = load_data(self.file_path)
+        titles = [t["title"] for t in data]
+        descriptions = [t["description"] for t in data]
 
-        title_tok_lists = normalize_for_index(titles)
-        body_tok_lists = normalize_for_index(descriptions)
+        title_tok_lists = preprocess(titles)
+        body_tok_lists = preprocess(descriptions)
 
         # create fresh iterator
-        data_iter = iter(data["movies"])
+        data_iter = iter(data)
         for d, t_tokens, b_tokens in zip(data_iter, title_tok_lists, body_tok_lists):
             doc_id = d["id"]
             tokens = t_tokens + [self.TITLE_END_TOKEN] + b_tokens
@@ -90,20 +90,7 @@ class InvertedIndex:
 
             for pos, tok in enumerate(tokens):
                 self._postings[tok][doc_id].append(pos)
-
         self._built = True
-
-    # --- query helpers ---
-    # def get_documents(self, term: str) -> List[int]:
-    #     """
-    #     Return sorted doc_ids that contain the (normalized) term.
-    #     """
-    #     toks = self._normalizer(term)
-    #     if not toks:
-    #         return []
-    #     tok = toks[0]  # treat 'term' as a single token
-    #     return sorted(self._postings.get(tok, {}).keys())
-
 
     # --- persistence (cache) ---
     def _sig_for_docs(self, docs_path: Path | None) -> dict:

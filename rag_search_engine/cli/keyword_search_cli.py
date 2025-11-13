@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 
-import argparse, math
+import argparse
 
-from rag_search_engine.utils.search import basic_search, calc_idf, search_inverted_index, calc_tf_idf
+from rag_search_engine.utils.search import (
+    basic_search,
+    calc_bm25_freq,
+    calc_freq,
+    calc_idf,
+    search_inverted_index,
+    calc_tf_idf,
+    calc_bm25,
+)
 from rag_search_engine.utils.inv_idx import InvertedIndex
 
 
@@ -22,15 +30,13 @@ def handle_build(args) -> None:
 
 def handle_search(args) -> None:
     print("Searching for:", args.query)
-    # update so InvertedIndex can be initialized without providing a file path
-    # implement search based on inverted index
     invidx = InvertedIndex()
     if invidx.exists():
         invidx.load()
         docmap = invidx.docmap()
         postings = invidx.index()
         print("Using cached data...")
-        result = search_inverted_index(args.query, postings, docmap)
+        result = search_inverted_index(args.query, postings)
         for doc_idx in result:
             print("{:}. {:}".format(doc_idx, docmap[doc_idx]["title"]))
         return
@@ -48,8 +54,20 @@ def handle_frequency(args):
         docmap = invidx.docmap()
         print(
             "{:} appears {:}".format(
-                args.word, docmap[args.doc_id]["description"].count(args.word)
+                args.word, calc_freq(args.word, args.doc_id, docmap)
             )
+        )
+    else:
+        raise Exception("Have to build a cached database first")
+
+
+def handle_bm25_frequency(args):
+    invidx = InvertedIndex()
+    if invidx.exists():
+        invidx.load()
+        docmap = invidx.docmap()
+        print(
+            f"BM25 TF score of '{args.word}' in document '{args.doc_id}': {calc_bm25_freq(args.word, args.doc_id, docmap, args.k1):.2f}"
         )
     else:
         raise Exception("Have to build a cached database first")
@@ -67,6 +85,18 @@ def handle_idf(args):
         raise Exception("Have to build a cached database first")
 
 
+def handle_bm25(args):
+    invidx = InvertedIndex()
+    if invidx.exists():
+        invidx.load()
+        docmap = invidx.docmap()
+        postings = invidx.index()
+        idf = calc_bm25(args.word, postings, docmap)
+        print(f"BM25 IDF score of {args.word}: {idf:.2f}")
+    else:
+        raise Exception("Have to build a cached database first")
+
+
 def handle_tfidf(args):
     invidx = InvertedIndex()
     if invidx.exists():
@@ -74,7 +104,9 @@ def handle_tfidf(args):
         docmap = invidx.docmap()
         postings = invidx.index()
         tf_idf = calc_tf_idf(args.doc_id, args.word, postings, docmap)
-        print(f"TF-IDF score of '{args.word}' in document '{args.doc_id}': {tf_idf:.2f}")
+        print(
+            f"TF-IDF score of '{args.word}' in document '{args.doc_id}': {tf_idf:.2f}"
+        )
     else:
         raise Exception("Have to build a cached database first")
 
@@ -101,16 +133,12 @@ def make_parser() -> argparse.ArgumentParser:
     # attach handler
     build_p.set_defaults(func=handle_build)
     # ________________________________________________________________________________
-
-    # ________________________________________________________________________________
     # ____________________search command______________________________________________
     # ________________________________________________________________________________
     search_p = subparsers.add_parser("search", help="Search movies using BM25")
     search_p.add_argument("query", type=str, help="Search query")
     # attach handler
     search_p.set_defaults(func=handle_search)
-    # ________________________________________________________________________________
-
     # ________________________________________________________________________________
     # ____________________frequency of a word_________________________________________
     # ________________________________________________________________________________
@@ -120,23 +148,39 @@ def make_parser() -> argparse.ArgumentParser:
     # attach handler
     tf_p.set_defaults(func=handle_frequency)
     # ________________________________________________________________________________
-
-    # ________________________________________________________________________________
-    # ____________________frequency of a word_________________________________________
+    # ______________inverse document frequency of a word______________________________
     # ________________________________________________________________________________
     idf_p = subparsers.add_parser("idf", help="get the inverse document frequency")
     idf_p.add_argument("word", type=str, help="word to get frequency")
     # attach handler
     idf_p.set_defaults(func=handle_idf)
     # ________________________________________________________________________________
-    # ________________________________________________________________________________
-    # ____________________frequency of a word_________________________________________
+    # ____________________tf-idf of a word_________________________________________
     # ________________________________________________________________________________
     tfidf_p = subparsers.add_parser("tfidf", help="get the tf-idf score")
     tfidf_p.add_argument("doc_id", type=int, help="doc id to search")
     tfidf_p.add_argument("word", type=str, help="word to get frequency")
     # attach handler
     tfidf_p.set_defaults(func=handle_tfidf)
+    # ________________________________________________________________________________
+    # ____________________BM25 of a word_________________________________________
+    # ________________________________________________________________________________
+    bm25_p = subparsers.add_parser("bm25idf", help="get the bm25idf score")
+    bm25_p.add_argument("word", type=str, help="word to get frequency")
+    # attach handler
+    bm25_p.set_defaults(func=handle_bm25)
+    # ________________________________________________________________________________
+    # ____________________bm25 frequency of a word____________________________________
+    # ________________________________________________________________________________
+    bm25tf_p = subparsers.add_parser("bm25tf", help="get the bm25 frequency of a word")
+    bm25tf_p.add_argument("doc_id", type=int, help="doc id to search")
+    bm25tf_p.add_argument("word", type=str, help="word to get frequency")
+    bm25tf_p.add_argument(
+        "-k1", type=float, default=1.5, help="scaling parameter for frequency: default=1.5"
+    )
+    # attach handler
+    bm25tf_p.set_defaults(func=handle_bm25_frequency)
+
     # ________________________________________________________________________________
     args = parser.parse_args()
     return parser

@@ -29,6 +29,7 @@ class InvertedIndex:
 
     INDEX_NAME = "index.pkl"
     DOCMAP_NAME = "docmap.pkl"
+    DOCLEN_NAME = "doclen.pkl"
     META_NAME = "meta.json"
 
     TITLE_END_TOKEN = "[TITLE_END]"  # field boundary token
@@ -44,6 +45,7 @@ class InvertedIndex:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._postings: Dict[str, Dict[int, List[int]]] = defaultdict(ddlist)
         self._docmap: Dict[int, Dict[str, str]] = SortedDict()
+        self._doclen: Dict[int, int] = SortedDict()
         self._normalizer = normalizer
         self._built = False
 
@@ -61,6 +63,9 @@ class InvertedIndex:
 
     def docmap(self) -> Dict[int, Dict[str, str]]:
         return self._docmap
+
+    def doclen(self) -> Dict[int, int]:
+        return self._doclen
 
     # ---- simple (per-doc) build ----
     def build(self) -> None:
@@ -81,12 +86,13 @@ class InvertedIndex:
         # create fresh iterator
         data_iter = iter(data)
         for d, t_tokens, b_tokens in zip(data_iter, title_tok_lists, body_tok_lists):
-            doc_id = d["id"]
+            doc_id = int(d["id"])
             tokens = t_tokens + [self.TITLE_END_TOKEN] + b_tokens
             self._docmap[doc_id] = {
                 "title": d["title"],
                 "description": d["description"],
             }
+            self._doclen[doc_id] = len(d["description"])
 
             for pos, tok in enumerate(tokens):
                 self._postings[tok][doc_id].append(pos)
@@ -117,16 +123,20 @@ class InvertedIndex:
 
         idx_file = self.cache_dir / self.INDEX_NAME
         dmap_file = self.cache_dir / self.DOCMAP_NAME
+        len_file = self.cache_dir / self.DOCLEN_NAME
         meta_file = self.cache_dir / self.META_NAME
 
         with open(idx_file, "wb") as f:
             pickle.dump(self._postings, f, protocol=pickle.HIGHEST_PROTOCOL)
         with open(dmap_file, "wb") as f:
             pickle.dump(self._docmap, f, protocol=pickle.HIGHEST_PROTOCOL)
+        with open(len_file, "wb") as f:
+            pickle.dump(self._doclen, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         meta = {
             "normalizer": getattr(self._normalizer, "__name__", "callable"),
             "signature_dmap": self._sig_for_docs(dmap_file),
+            "signature_dlen": self._sig_for_docs(len_file),
             "signature_idx": self._sig_for_docs(idx_file),
             "counts": {"terms": len(self._postings), "docs": len(self._docmap)},
             "version": 1,
@@ -140,6 +150,7 @@ class InvertedIndex:
         """
         idx_file = self.cache_dir / self.INDEX_NAME
         dmap_file = self.cache_dir / self.DOCMAP_NAME
+        len_file = self.cache_dir / self.DOCLEN_NAME
 
         if not idx_file.exists() or not dmap_file.exists():
             return False
@@ -148,6 +159,8 @@ class InvertedIndex:
             self._postings = pickle.load(f)
         with open(dmap_file, "rb") as f:
             self._docmap = pickle.load(f)
+        with open(len_file, "rb") as f:
+            self._doclen = pickle.load(f)
 
         self._built = True
         return True

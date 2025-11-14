@@ -4,6 +4,7 @@ import argparse
 
 from rag_search_engine.utils.search import (
     basic_search,
+    bm25_search,
     calc_bm25_freq,
     calc_freq,
     calc_idf,
@@ -28,6 +29,10 @@ def handle_build(args) -> None:
     # TODO: add option for a partial build?
 
 
+def process_entry(args) -> None:
+    pass
+
+
 def handle_search(args) -> None:
     print("Searching for:", args.query)
     invidx = InvertedIndex()
@@ -39,6 +44,30 @@ def handle_search(args) -> None:
         result = search_inverted_index(args.query, postings)
         for doc_idx in result:
             print("{:}. {:}".format(doc_idx, docmap[doc_idx]["title"]))
+        return
+
+    print("No cached data, falling back to basic search")
+    results = basic_search(args.query.lower())
+    for idx, r in enumerate(results):
+        print(f"{idx}. {r}")
+
+
+def handle_bm25_search(args) -> None:
+    print("Searching for:", args.query)
+    invidx = InvertedIndex()
+    if invidx.exists():
+        invidx.load()
+        docmap = invidx.docmap()
+        postings = invidx.index()
+        doclen = invidx.doclen()
+        print("Using cached data...")
+        result = bm25_search(args.query, postings, docmap, doclen)
+        for idx, (bm25, doc_idx) in enumerate(result[::-1]):
+            print(
+                "{:}. ({:}) {:}  - Score: {:.2f}".format(
+                    idx + 1, doc_idx, docmap[doc_idx]["title"], bm25
+                )
+            )
         return
 
     print("No cached data, falling back to basic search")
@@ -66,8 +95,10 @@ def handle_bm25_frequency(args):
     if invidx.exists():
         invidx.load()
         docmap = invidx.docmap()
+        doclen = invidx.doclen()
+        bm25tf = calc_bm25_freq(args.word, args.doc_id, docmap, doclen, args.k1, args.b)
         print(
-            f"BM25 TF score of '{args.word}' in document '{args.doc_id}': {calc_bm25_freq(args.word, args.doc_id, docmap, args.k1):.2f}"
+            f"BM25 TF score of '{args.word}' in document '{args.doc_id}': {bm25tf:.2f}"
         )
     else:
         raise Exception("Have to build a cached database first")
@@ -135,10 +166,19 @@ def make_parser() -> argparse.ArgumentParser:
     # ________________________________________________________________________________
     # ____________________search command______________________________________________
     # ________________________________________________________________________________
-    search_p = subparsers.add_parser("search", help="Search movies using BM25")
+    search_p = subparsers.add_parser(
+        "search", help="Search movies using inverted index search"
+    )
     search_p.add_argument("query", type=str, help="Search query")
     # attach handler
     search_p.set_defaults(func=handle_search)
+    searchbm25_p = subparsers.add_parser(
+        "bm25search", help="Search movies using bm25 search"
+    )
+    searchbm25_p.add_argument("query", type=str, help="Search query")
+    # attach handler
+    searchbm25_p.set_defaults(func=handle_bm25_search)
+
     # ________________________________________________________________________________
     # ____________________frequency of a word_________________________________________
     # ________________________________________________________________________________
@@ -176,9 +216,17 @@ def make_parser() -> argparse.ArgumentParser:
     bm25tf_p.add_argument("doc_id", type=int, help="doc id to search")
     bm25tf_p.add_argument("word", type=str, help="word to get frequency")
     bm25tf_p.add_argument(
-        "-k1", type=float, default=1.5, help="scaling parameter for frequency: default=1.5"
+        "-k1",
+        type=float,
+        default=1.5,
+        help="scaling parameter for frequency: default=1.5",
     )
-    # attach handler
+    bm25tf_p.add_argument(
+        "-b",
+        type=float,
+        default=0.75,
+        help="scaling parameter for document length: default=0.75",
+    )  # attach handler
     bm25tf_p.set_defaults(func=handle_bm25_frequency)
 
     # ________________________________________________________________________________

@@ -4,10 +4,15 @@ import argparse
 
 from rag_search_engine.utils.semantic_search import (
     SemanticSearch,
+    SemanticSearchChunked,
+    verify_chunk_embeddings,
     verify_embeddings,
     verify_model,
     vdb_query,
+    search_chunked,
 )
+
+from rag_search_engine.utils.utils import chunk, semantic_chunk
 
 
 def handle_verify(args):
@@ -28,6 +33,28 @@ def handle_verify_embedding(args):
 
 def handle_vector_search(args):
     vdb_query(args.query, args.limit)
+
+
+def handle_chunk(args):
+    chunked_text = chunk(args.text, args.chunk_size, args.overlap)
+    print(f"Chunking {len(args.text.strip())} characters")
+    for idx, ct in enumerate(chunked_text):
+        print(f"{idx+1}. {' '.join(ct)}")
+
+
+def handle_semantic_chunk(args):
+    chunked_text = semantic_chunk(args.text, args.max_chunk_size, args.overlap)
+    print(f"Semantically chunking {len(args.text.strip())} characters")
+    for idx, ct in enumerate(chunked_text):
+        print(f"{idx+1}. {' '.join(ct)}")
+
+
+def handle_embed_chunks(args):
+    verify_chunk_embeddings(args.path, args.max_chunk_size, args.overlap)
+
+
+def handle_search_chunked(args):
+    search_chunked(args.text, args.limit)
 
 
 def make_parser():
@@ -67,9 +94,82 @@ def make_parser():
     # ________________________________________________________________________________
     build_s = subparsers.add_parser("search", help="search vector database")
     build_s.add_argument("query", type=str, help="query text to search")
-    build_s.add_argument("--limit", type=int, default=5, help="limit the number of results")
+    build_s.add_argument(
+        "--limit", type=int, default=5, help="limit the number of results"
+    )
     # attach handler
     build_s.set_defaults(func=handle_vector_search)
+    # ________________________________________________________________________________
+    # ________________________chunk text______________________________________________
+    # ________________________________________________________________________________
+    build_s = subparsers.add_parser(
+        "chunk", help="split a piece of text into chunks based on sentences"
+    )
+    build_s.add_argument("text", type=str, help="text to be split")
+    build_s.add_argument(
+        "--chunk-size", type=int, default=5, help="limit the words in a chunk"
+    )
+    build_s.add_argument(
+        "--overlap", type=int, default=0, help="allow words to overlap in chunks"
+    )
+    # attach handler
+    build_s.set_defaults(func=handle_chunk)
+    # ________________________________________________________________________________
+    # ________________________semantic chunk text_____________________________________
+    # ________________________________________________________________________________
+    build_s = subparsers.add_parser(
+        "semantic_chunk", help="split a piece of text into chunks based on sentences"
+    )
+    build_s.add_argument("text", type=str, help="text to be split")
+    build_s.add_argument(
+        "--max-chunk-size", type=int, default=4, help="limit the sentences in a chunk"
+    )
+    build_s.add_argument(
+        "--overlap", type=int, default=0, help="allow sentences to overlap in chunks"
+    )
+    # attach handler
+    build_s.set_defaults(func=handle_semantic_chunk)
+    # ________________________________________________________________________________
+    # ________________________build chunk db_____________________________________
+    # ________________________________________________________________________________
+    build_ec = subparsers.add_parser(
+        "embed_chunks", help="create database for chunked text"
+    )
+    build_ec.add_argument(
+        "--path",
+        default="/home/joseph/rag-search-engine/data/movies.json",
+        type=str,
+        help="data base source",
+    )
+    build_ec.add_argument(
+        "--max-chunk-size", type=int, default=4, help="limit the sentences in a chunk"
+    )
+    build_ec.add_argument(
+        "--overlap", type=int, default=1, help="allow sentences to overlap in chunks"
+    )
+    # attach handler
+    build_ec.set_defaults(func=handle_embed_chunks)
+    # ________________________________________________________________________________
+    # ________________________search chunk db_____________________________________
+    # ________________________________________________________________________________
+    build_sc = subparsers.add_parser(
+        "search_chunked", help="search database of chunked text"
+    )
+    build_sc.add_argument(
+        "text",
+        type=str,
+        help="text to search the database",
+    )
+    build_sc.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="text to search the database",
+    )
+
+    # attach handler
+    build_sc.set_defaults(func=handle_search_chunked)
+
     return parser
 
 

@@ -326,3 +326,59 @@ def cosine_similarity(
 
     return_idx = np.argsort(id_sims["sim"])
     return id_sims["id"][return_idx[-10:]]
+
+
+def chunk(text: str | List[str], chunk_size: int, overlap: int) -> List[List[str]]:
+    """
+    chunk input text into a List
+
+        text: input string to be chunked
+        chunk_size: number of words per chunk
+        overlap: number of overlapping words between adjacent chunks
+    """
+    match text:
+        case str():
+            # if a raw string is the input we split on white space
+            text = text.strip().split()
+        case list():
+            # if a list of strings is input we assume it was pre-split
+            pass
+
+    chunked_text, chunk = [text[:chunk_size]], []
+    for phrase in text[chunk_size:]:
+        if overlap > 0 and len(chunk) == 0 and overlap < chunk_size:
+            chunk = chunked_text[-1][-overlap:]
+        chunk.append(phrase)
+
+        if len(chunk) == chunk_size:
+            chunked_text.append(chunk)
+            chunk = []
+
+    if chunk:
+        chunked_text.append(chunk)
+
+    return chunked_text
+
+
+def semantic_chunk(
+    text: str | List[str], max_chunk_size: int, overlap: int
+) -> List[List[str]]:
+    """
+    chunk input text into a List based on punctuaion
+
+        text: input string to be chunked
+        max_chunk_size: maximum number of sentences per chunk
+        overlap: number of overlapping sentences between adjacent chunks
+    """
+    # precompiled at import time
+    SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+    match text:
+        case str():
+            return chunk(SPLIT_RE.split(text.strip()), max_chunk_size, overlap)
+        case list():
+            # double list comprehension to return List[str], not nested
+            return [
+                s
+                for t in text
+                for s in chunk(SPLIT_RE.split(t.strip()), max_chunk_size, overlap)
+            ]

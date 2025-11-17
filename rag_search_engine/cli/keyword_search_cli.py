@@ -68,6 +68,7 @@ def handle_bm25_search(args) -> None:
                     idx + 1, doc_idx, docmap[doc_idx]["title"], bm25
                 )
             )
+
         return
 
     print("No cached data, falling back to basic search")
@@ -230,7 +231,7 @@ def make_parser() -> argparse.ArgumentParser:
     bm25tf_p.set_defaults(func=handle_bm25_frequency)
 
     # ________________________________________________________________________________
-    args = parser.parse_args()
+    # args = parser.parse_args()
     return parser
 
 

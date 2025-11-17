@@ -110,8 +110,9 @@ def bm25_search(
     for id in prelim_results:
         word_score = 0
         for word in sanitized_text:
-            word_score += calc_bm25_freq(word, id, docmap, doclen) *\
-                          calc_bm25( word, postings, docmap)
+            word_score += calc_bm25_freq(word, id, docmap, doclen) * calc_bm25(
+                word, postings, docmap
+            )
         doc_names += [(word_score, id)]
 
     return doc_names[-15:]

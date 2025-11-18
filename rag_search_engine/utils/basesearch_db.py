@@ -87,3 +87,4 @@ class BaseSearchDB:
 
     def close(self) -> None:
         self.conn.close()
+

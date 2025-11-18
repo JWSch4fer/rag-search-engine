@@ -2,14 +2,15 @@ import re, html, unicodedata, codecs, json
 from functools import lru_cache
 from typing import Dict, List
 from pathlib import Path
-import numpy as np
-import numpy.typing as npt
+# import numpy as np
+# import numpy.typing as npt
 import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
 from rapidfuzz.fuzz import partial_ratio
 import unicodedata
 from rapidfuzz import process
 
+ROOT = Path(__file__).resolve().parents[2]
 
 CANONICAL_VOCAB = {
     # core genres
@@ -170,8 +171,6 @@ STOPWORDS = set(STOP_WORDS) - ALLOWLIST
 
 # --------- text normalization (pre-spaCy) ---------
 _u_escape = re.compile(r"\\u[0-9a-fA-F]{4}")
-_intra_dash = re.compile(r"(?<=\w)[\-\u2010-\u2015](?=\w)")
-
 
 def fix_text(s: str) -> str:
     # NOTE: case is not changed!!
@@ -237,7 +236,7 @@ def preprocess(texts: str | List[str], n_process=1, batch_size=256) -> List[str]
         # 1) Load spaCy (keep POS for lemmatizer; drop NER for speed)
         nlp = spacy.load("en_core_web_sm", disable=["ner"])
     except OSError:
-        from spacy.cli import download
+        import spacy.cli.download as download
 
         download("en_core_web_sm")
         nlp = spacy.load("en_core_web_sm", disable=["ner"])
@@ -279,53 +278,53 @@ def preprocess(texts: str | List[str], n_process=1, batch_size=256) -> List[str]
     return out_all
 
 
-def cosine_similarity(
-    vec_db: npt.NDArray[np.float64],  # shape (N, D)
-    vec: npt.NDArray[np.float64],  # shape (D,)
-) -> npt.NDArray[np.int32]:  # shape (N,)
-    """
-    Compute cosine similarity between each row in vec_db and vec.
+# def cosine_similarity(
+#     vec_db: npt.NDArray[np.float64],  # shape (N, D)
+#     vec: npt.NDArray[np.float64],  # shape (D,)
+# ) -> npt.NDArray[np.int32]:  # shape (N,)
+#     """
+#     Compute cosine similarity between each row in vec_db and vec.
 
-    vec_db: 2D array of shape (N, D)
-    vec:    1D array of shape (D,)
-    returns: 1D array of shape (N,) with cosine similarities
-    """
-    if vec_db.ndim != 2:
-        raise ValueError(f"vec_db must be 2D (N, D); got shape {vec_db.shape}")
-    if vec.ndim != 1:
-        raise ValueError(f"vec must be 1D (D,); got shape {vec.shape}")
-    if vec_db.shape[1] != vec.shape[0]:
-        raise ValueError(
-            f"Dimension mismatch: vec_db has D={vec_db.shape[1]}, "
-            f"vec has D={vec.shape[0]}"
-        )
+#     vec_db: 2D array of shape (N, D)
+#     vec:    1D array of shape (D,)
+#     returns: 1D array of shape (N,) with cosine similarities
+#     """
+#     if vec_db.ndim != 2:
+#         raise ValueError(f"vec_db must be 2D (N, D); got shape {vec_db.shape}")
+#     if vec.ndim != 1:
+#         raise ValueError(f"vec must be 1D (D,); got shape {vec.shape}")
+#     if vec_db.shape[1] != vec.shape[0]:
+#         raise ValueError(
+#             f"Dimension mismatch: vec_db has D={vec_db.shape[1]}, "
+#             f"vec has D={vec.shape[0]}"
+#         )
 
-    # Norm of the query vector
-    norm_vec = np.linalg.norm(vec)
-    if norm_vec == 0:
-        # If the query is the zero vector, all similarities are 0
-        return np.zeros(vec_db.shape[0], dtype=np.float64)
+#     # Norm of the query vector
+#     norm_vec = np.linalg.norm(vec)
+#     if norm_vec == 0:
+#         # If the query is the zero vector, all similarities are 0
+#         return np.zeros(vec_db.shape[0], dtype=np.float64)
 
-    # Norms of each row in vec_db
-    norms_db = np.linalg.norm(vec_db, axis=1)  # shape (N,)
+#     # Norms of each row in vec_db
+#     norms_db = np.linalg.norm(vec_db, axis=1)  # shape (N,)
 
-    # Dot products between each row and vec
-    dots = vec_db @ vec  # shape (N,)
+#     # Dot products between each row and vec
+#     dots = vec_db @ vec  # shape (N,)
 
-    # Avoid division by zero for zero rows in vec_db
-    sims = np.zeros(vec_db.shape[0], dtype=np.float64)
+#     # Avoid division by zero for zero rows in vec_db
+#     sims = np.zeros(vec_db.shape[0], dtype=np.float64)
 
-    sims = dots / (norms_db * norm_vec)
+#     sims = dots / (norms_db * norm_vec)
 
-    # track which documents are the best match to the query
-    dt = np.dtype([("id", np.int32), ("sim", np.float64)])
-    id_sims = np.zeros(sims.shape[0], dtype=dt)
+#     # track which documents are the best match to the query
+#     dt = np.dtype([("id", np.int32), ("sim", np.float64)])
+#     id_sims = np.zeros(sims.shape[0], dtype=dt)
 
-    id_sims["id"] = np.arange(sims.shape[0], dtype=np.int32)
-    id_sims["sim"] = sims
+#     id_sims["id"] = np.arange(sims.shape[0], dtype=np.int32)
+#     id_sims["sim"] = sims
 
-    return_idx = np.argsort(id_sims["sim"])
-    return id_sims["id"][return_idx[-10:]]
+#     return_idx = np.argsort(id_sims["sim"])
+#     return id_sims["id"][return_idx[-10:]]
 
 
 def chunk(text: str | List[str], chunk_size: int, overlap: int) -> List[List[str]]:
@@ -385,6 +384,9 @@ def semantic_chunk(
 
 
 def min_max_norm(nums: List[float]) -> List[float]:
+    """
+    return the normalized list of numbers based on min/max
+    """
     min_score = min(nums)
     max_score = max(nums)
     if min_score == max_score:

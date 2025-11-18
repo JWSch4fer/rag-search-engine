@@ -7,8 +7,8 @@ from collections import defaultdict
 import json
 import math
 
-from rag_search_engine.utils.base_search_db import BaseSearchDB
-from rag_search_engine.utils.utils import preprocess  # your existing normalizer
+from rag_search_engine.utils.basesearch_db import BaseSearchDB
+from rag_search_engine.utils.utils import preprocess
 
 
 class KeywordSearch(BaseSearchDB):
@@ -23,11 +23,16 @@ class KeywordSearch(BaseSearchDB):
 
     TITLE_END_TOKEN = "[TITLE_END]"
 
-    def __init__(self, docs_path: Path | str, db_path: Path | str | None = None) -> None:
-        super().__init__(docs_path=docs_path, db_path=db_path)
-
+    def __init__(
+        self,
+        docs_path: Path | str,
+        db_path: Path | str | None = None,
+        force: bool = False,
+    ) -> None:
+        super().__init__(docs_path=docs_path, db_path=db_path, force=force)
         self._init_keyword_schema()
-        self._build_or_sync_index()
+        if self.docs_path:
+            self._build_or_sync_index()
 
     # ------------------------ schema ------------------------ #
     def _init_keyword_schema(self) -> None:
@@ -96,6 +101,8 @@ class KeywordSearch(BaseSearchDB):
         cur.execute("DELETE FROM doclen")
         self.conn.commit()
 
+        cur = self.conn.cursor()
+
         # Prepare text
         titles = [d["title"] for d in self.documents]
         descriptions = [d["description"] for d in self.documents]
@@ -103,37 +110,57 @@ class KeywordSearch(BaseSearchDB):
         title_tok_lists = preprocess(titles)
         body_tok_lists = preprocess(descriptions)
 
-        # In-memory structures for one-time build
-        term_id_cache: Dict[str, int] = {}
-        postings_map: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+        # In-memory structures
         doclen_map: Dict[int, int] = {}
+        postings_by_term: Dict[str, Dict[int, List[int]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        all_terms: set[str] = set()
 
-        for d, t_tokens, b_tokens in zip(self.documents, title_tok_lists, body_tok_lists):
+        # 1) Build doc lengths + postings grouped by *term string* in memory
+        for d, t_tokens, b_tokens in zip(
+            self.documents, title_tok_lists, body_tok_lists
+        ):
             doc_id = int(d["id"])
             tokens = t_tokens + [self.TITLE_END_TOKEN] + b_tokens
             doclen_map[doc_id] = len(tokens)
 
             for pos, tok in enumerate(tokens):
-                # Get/create term_id
-                term_id = term_id_cache.get(tok)
-                if term_id is None:
-                    cur.execute("INSERT INTO terms(term) VALUES (?)", (tok,))
-                    term_id = cur.lastrowid
-                    term_id_cache[tok] = term_id
+                postings_by_term[tok][doc_id].append(pos)
+                all_terms.add(tok)
 
-                postings_map[(term_id, doc_id)].append(pos)
+        # 2) Load any existing terms from DB
+        term_id_cache: Dict[str, int] = {}
+        cur.execute("SELECT id, term FROM terms")
+        for term_id, term in cur.fetchall():
+            term_id_cache[term] = term_id
 
-        # Insert doc lengths
+        # 3) Insert any *new* terms in bulk
+        new_terms = [t for t in all_terms if t not in term_id_cache]
+        if new_terms:
+            cur.executemany(
+                "INSERT OR IGNORE INTO terms(term) VALUES (?)",
+                [(t,) for t in new_terms],
+            )
+            # Reload mapping for all terms (simple + robust)
+            term_id_cache.clear()
+            cur.execute("SELECT id, term FROM terms")
+            for term_id, term in cur.fetchall():
+                term_id_cache[term] = term_id
+
+        # 4) Insert doc lengths in bulk
         cur.executemany(
             "INSERT INTO doclen(doc_id, length) VALUES (?, ?)",
             [(doc_id, length) for doc_id, length in doclen_map.items()],
         )
 
-        # Insert postings (positions as JSON)
-        posting_rows = []
-        for (term_id, doc_id), positions in postings_map.items():
-            positions_json = json.dumps(positions)
-            posting_rows.append((term_id, doc_id, positions_json))
+        # 5) Build postings rows (term_id, doc_id, positions_json) and bulk insert
+        posting_rows: List[tuple[int, int, str]] = []
+        for term, doc_map in postings_by_term.items():
+            term_id = term_id_cache[term]
+            for doc_id, positions in doc_map.items():
+                positions_json = json.dumps(positions)
+                posting_rows.append((term_id, doc_id, positions_json))
 
         cur.executemany(
             "INSERT INTO postings(term_id, doc_id, positions) VALUES (?, ?, ?)",
@@ -145,7 +172,7 @@ class KeywordSearch(BaseSearchDB):
     # ------------------------ BM25 search ------------------------ #
     def search(
         self, query: str, k: int = 10, k1: float = 1.5, b: float = 0.75
-    ) -> List[Tuple[int, float, Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Simple BM25 search over the DB-backed inverted index.
 
@@ -196,9 +223,7 @@ class KeywordSearch(BaseSearchDB):
                 # doc length
                 dl = doclen_cache.get(doc_id)
                 if dl is None:
-                    cur.execute(
-                        "SELECT length FROM doclen WHERE doc_id = ?", (doc_id,)
-                    )
+                    cur.execute("SELECT length FROM doclen WHERE doc_id = ?", (doc_id,))
                     dl_row = cur.fetchone()
                     if not dl_row:
                         continue
@@ -226,21 +251,12 @@ class KeywordSearch(BaseSearchDB):
         )
         meta_rows = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
 
-        results: List[Tuple[int, float, Dict[str, Any]]] = []
+        results: List[Dict[str, Any]] = []
         for doc_id, score in sorted_docs:
             title, desc = meta_rows.get(doc_id, ("<missing>", ""))  # should exist
-            meta = {"title": title, "description": desc}
-            results.append((doc_id, score, meta))
+            meta = {"title": title, "description": desc, "id": doc_id, "score": score}
+            results.append(meta)
 
         return results
 
-
-# ------------------------ Top-level helper for CLI ------------------------ #
-def keyword_query(docs_path: str | Path, query: str, k: int = 10) -> None:
-    ks = KeywordSearch(docs_path)
-    results = ks.search(query, k=k)
-
-    for rank, (doc_id, score, meta) in enumerate(results, start=1):
-        title = meta.get("title", f"doc {doc_id}")
-        print(f"{rank:2d}. {score:.4f}  {title}")
 

@@ -15,4 +15,4 @@ where = ["."] #top level, if project is moved into src/ later change this
 include = ["rag_search_engine*"]   # <-- this is the key bit
 
 [project.scripts]
-rag-search = "rag_search_engine.cli.keyword_search_cli:main"
+rag-search = "rag_search_engine.cli.cli:main"

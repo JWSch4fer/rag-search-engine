@@ -81,6 +81,7 @@ def bm25_search(
     postings: Dict[str, Dict[int, List[int]]],
     docmap: Dict[int, Dict[str, str]],
     doclen: Dict[int, int],
+    limit: int = 15,
 ) -> List:
     """
     Case insensitivity: Convert all text to lowercase
@@ -115,7 +116,7 @@ def bm25_search(
             )
         doc_names += [(word_score, id)]
 
-    return doc_names[-15:]
+    return doc_names[-limit:]
 
 
 def calc_idf(

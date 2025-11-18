@@ -382,3 +382,26 @@ def semantic_chunk(
                 for t in text
                 for s in chunk(SPLIT_RE.split(t.strip()), max_chunk_size, overlap)
             ]
+
+
+def min_max_norm(nums: List[float]) -> List[float]:
+    min_score = min(nums)
+    max_score = max(nums)
+    if min_score == max_score:
+        return [1.0] * len(nums)
+    minmax = lambda x: (x - min_score) / (max_score - min_score)
+    return [minmax(n) for n in nums]
+
+
+def hybrid_score(bm25_score: float, semantic_score: float, alpha: float = 0.5):
+    """
+    α = 1.0: [████████████████████] 100% Keyword
+    α = 0.7: [██████████████------] 70% Keyword, 30% Semantic
+    α = 0.5: [██████████----------] 50/50 Split
+    α = 0.2: [████----------------] 20% Keyword, 80% Semantic
+    α = 0.0: [--------------------] 100% Semantic
+    """
+    return alpha * bm25_score + (1 - alpha) * semantic_score
+
+def rrf_score(rank: int, k=60) -> float:
+    return 1 / (k + rank)

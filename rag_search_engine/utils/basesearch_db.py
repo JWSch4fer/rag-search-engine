@@ -6,10 +6,8 @@ from typing import List, Dict, Any, Optional
 
 import sqlite3
 
-from rag_search_engine.utils.utils import ROOT, load_data
-
-
-DEFAULT_DB_PATH = ROOT / "rag_search_engine" / "cache" / "movies.db"
+from rag_search_engine.utils.utils import load_data
+from rag_search_engine.config import DEFAULT_DB_PATH
 
 
 class BaseSearchDB:

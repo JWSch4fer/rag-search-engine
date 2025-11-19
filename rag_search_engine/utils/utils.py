@@ -2,175 +2,20 @@ import re, html, unicodedata, codecs, json
 from functools import lru_cache
 from typing import Dict, List
 from pathlib import Path
-# import numpy as np
-# import numpy.typing as npt
 import spacy
 from spacy.lang.en.stop_words import STOP_WORDS
 from rapidfuzz.fuzz import partial_ratio
 import unicodedata
 from rapidfuzz import process
-
-ROOT = Path(__file__).resolve().parents[2]
-
-CANONICAL_VOCAB = {
-    # core genres
-    "sciencefiction",
-    "cyberpunk",
-    "fantasy",
-    "horror",
-    "thriller",
-    "comedy",
-    "drama",
-    "romance",
-    "action",
-    "adventure",
-    "mystery",
-    "crime",
-    "documentary",
-    "biography",
-    "war",
-    "western",
-    "musical",
-    "family",
-    # subgenres / styles
-    "noir",
-    "heist",
-    "gangster",
-    "spaghettiwestern",
-    "martialarts",
-    "psychologicalthriller",
-    "psychologicalhorror",
-    "technothriller",
-    "foundfootage",
-    "slasher",
-    "splatter",
-    "romcom",
-    "screwballcomedy",
-    "slapstickcomedy",
-    "comingofage",
-    "sliceoflife",
-    "period",
-    "arthouse",
-    "blackandwhite",
-    "documentary",
-    "youngadult",
-    # formats
-    "anime",
-    "animation",
-    "liveaction",
-    "stopmotion",
-    "cgi",
-    "3d",
-    "2d",
-    "series",
-    "television",
-    "televisionfilm",
-    "miniseries",
-    "documentaryseries",
-    "movie",
-    "film",
-    "short",
-    "episode",
-    # comics/superheroes
-    "superhero",
-    "comicbook",
-    # anime subtypes
-    "shonen",
-    "shojo",
-    "seinen",
-    "josei",
-    "mecha",
-    "isekai",
-    "magicalgirl",
-    "ova",
-    "ona",
-    # audience / misc
-}
-
-NORMALIZATION_MAP = {
-    # sci-fi & tech
-    "scifi": "sciencefiction",
-    "sci-fi": "sciencefiction",
-    "sf": "sciencefiction",
-    "sci fi": "sciencefiction",
-    "sci_fi": "sciencefiction",
-    "spaceopera": "sciencefiction",
-    # animation / format
-    "animated": "anime",
-    "animation": "anime",
-    "animations": "anime",
-    "animator": "anime",
-    "animators": "anime",
-    "animate": "anime",
-    "cartoon": "anime",
-    "cartoons": "anime",
-    "live-action": "liveaction",
-    "stop-motion": "stopmotion",
-    # tv / series
-    "t.v.": "television",
-    "tv": "television",
-    "tvmovie": "television",
-    "tv-movie": "television",
-    "limitedseries": "miniseries",
-    "mini-series": "miniseries",
-    "docuseries": "documentaryseries",
-    "docu-series": "documentaryseries",
-    "episode": "episode",
-    "ep": "episode",
-    # documentary / bio
-    "docu": "documentary",
-    "biopic": "documentary",
-    "bio-pic": "documentary",
-    # romance/comedy
-    "rom-com": "romcom",
-    "rom com": "romcom",
-    "romcoms": "romcom",
-    "screwball": "comedy",
-    "slapstick": "comedy",
-    # horror & thriller
-    "found-footage": "horror",
-    "psychological thriller": "horror",
-    "psychological horror": "horror",
-    "techno-thriller": "horror",
-    "technothriller": "horror",
-    "splatter": "horror",
-    "slasher": "horror",
-    # crime/noir
-    "film-noir": "noir",
-    "filmnoir": "noir",
-    # western
-    "spaghetti-western": "western",
-    # action/martial arts
-    "martial-arts": "martialarts",
-    # period/style
-    "period piece": "period",
-    "period-piece": "period",
-    "coming-of-age": "comingofage",
-    "slice-of-life": "sliceoflife",
-    "arthouse": "arthouse",
-    "art-house": "arthouse",
-    "black-and-white": "blackandwhite",
-    "b&w": "blackandwhite",
-    # superhero/comics
-    "super-hero": "superhero",
-    "comic-book": "comicbook",
-    "comic book": "comicbook",
-    # audience
-    "family-friendly": "family",
-    "young-adult": "youngadult",
-    "ya": "youngadult",
-}
+from rag_search_engine.config import NORMALIZATION_MAP, CANONICAL_VOCAB, ALLOWLIST,MIN_LEN_FOR_FUZZY, FUZZY_SCORE_CUTOFF
 
 
-FUZZY_SCORE_CUTOFF = 85  # a bit looser to catch 'animé'
-MIN_LEN_FOR_FUZZY = 3
-
-ALLOWLIST = {"go", "get", "make"}
 STOPWORDS = set(STOP_WORDS) - ALLOWLIST
 
 
 # --------- text normalization (pre-spaCy) ---------
 _u_escape = re.compile(r"\\u[0-9a-fA-F]{4}")
+
 
 def fix_text(s: str) -> str:
     # NOTE: case is not changed!!
@@ -278,55 +123,6 @@ def preprocess(texts: str | List[str], n_process=1, batch_size=256) -> List[str]
     return out_all
 
 
-# def cosine_similarity(
-#     vec_db: npt.NDArray[np.float64],  # shape (N, D)
-#     vec: npt.NDArray[np.float64],  # shape (D,)
-# ) -> npt.NDArray[np.int32]:  # shape (N,)
-#     """
-#     Compute cosine similarity between each row in vec_db and vec.
-
-#     vec_db: 2D array of shape (N, D)
-#     vec:    1D array of shape (D,)
-#     returns: 1D array of shape (N,) with cosine similarities
-#     """
-#     if vec_db.ndim != 2:
-#         raise ValueError(f"vec_db must be 2D (N, D); got shape {vec_db.shape}")
-#     if vec.ndim != 1:
-#         raise ValueError(f"vec must be 1D (D,); got shape {vec.shape}")
-#     if vec_db.shape[1] != vec.shape[0]:
-#         raise ValueError(
-#             f"Dimension mismatch: vec_db has D={vec_db.shape[1]}, "
-#             f"vec has D={vec.shape[0]}"
-#         )
-
-#     # Norm of the query vector
-#     norm_vec = np.linalg.norm(vec)
-#     if norm_vec == 0:
-#         # If the query is the zero vector, all similarities are 0
-#         return np.zeros(vec_db.shape[0], dtype=np.float64)
-
-#     # Norms of each row in vec_db
-#     norms_db = np.linalg.norm(vec_db, axis=1)  # shape (N,)
-
-#     # Dot products between each row and vec
-#     dots = vec_db @ vec  # shape (N,)
-
-#     # Avoid division by zero for zero rows in vec_db
-#     sims = np.zeros(vec_db.shape[0], dtype=np.float64)
-
-#     sims = dots / (norms_db * norm_vec)
-
-#     # track which documents are the best match to the query
-#     dt = np.dtype([("id", np.int32), ("sim", np.float64)])
-#     id_sims = np.zeros(sims.shape[0], dtype=dt)
-
-#     id_sims["id"] = np.arange(sims.shape[0], dtype=np.int32)
-#     id_sims["sim"] = sims
-
-#     return_idx = np.argsort(id_sims["sim"])
-#     return id_sims["id"][return_idx[-10:]]
-
-
 def chunk(text: str | List[str], chunk_size: int, overlap: int) -> List[List[str]]:
     """
     chunk input text into a List
@@ -404,6 +200,7 @@ def hybrid_score(bm25_score: float, semantic_score: float, alpha: float = 0.5):
     α = 0.0: [--------------------] 100% Semantic
     """
     return alpha * bm25_score + (1 - alpha) * semantic_score
+
 
 def rrf_score(rank: int, k=60) -> float:
     return 1 / (k + rank)

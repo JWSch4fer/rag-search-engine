@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-import argparse
+import argparse, logging
 
+from rag_search_engine.llm.gemini import Gemini
 from rag_search_engine.utils.semantic_search import SemanticSearch
 from rag_search_engine.utils.keyword_search import KeywordSearch
 from rag_search_engine.utils.hybrid_search import HybridSearch
-import os
-from dotenv import load_dotenv
-
-from rag_search_engine.utils.basesearch_db import DEFAULT_DB_PATH
-
-# load_dotenv()
-# api_key = os.environ.get("GEMINI_API_KEY")
+from rag_search_engine.config import DEFAULT_DB_PATH
+from rag_search_engine.config import GEMINI_API_KEY
 
 
 def handle_hybrid_weight(args: argparse.Namespace):
@@ -26,11 +22,14 @@ def handle_hybrid_weight(args: argparse.Namespace):
 
 
 def handle_hybrid_rrf(args: argparse.Namespace):
+    gi = Gemini()
+    query = gi.enhance(args.enhance, args.query)
     hs = HybridSearch(
         docs_path=None,
         db_path=DEFAULT_DB_PATH,
     )
-    hits = hs.rrf_search(args.query, k=args.k, limit=args.limit)
+    hits = hs.rrf_search(query, k=args.k, limit=args.limit)
+    print(f"Enhanced query ({args.enhance}): '{args.query}' -> '{query}'\n")
 
     for h in hits:
         print(f"{h['score']:.4f}  {h['title']}")
@@ -137,7 +136,7 @@ def make_parser() -> argparse.ArgumentParser:
     # ___________________________hybrid search________________________________________
     # ________________________________________________________________________________
     build_ws = subparsers.add_parser(
-        "weighted_search",
+        "weighted-search",
         help="combine weighted semantic search results with keyword results",
     )
     build_ws.add_argument(
@@ -163,33 +162,48 @@ def make_parser() -> argparse.ArgumentParser:
     # ________________________________________________________________________________
     # ___________________________hybrid search rrfl___________________________________
     # ________________________________________________________________________________
-    build_ws = subparsers.add_parser(
-        "rrf_search",
+    build_rrf = subparsers.add_parser(
+        "rrf-search",
         help="combine weighted semantic search results with keyword results",
     )
-    build_ws.add_argument(
+    build_rrf.add_argument(
         "query",
         type=str,
         help="Path to source data (default: %(default)s)",
     )
-    build_ws.add_argument(
+    build_rrf.add_argument(
         "--limit",
         type=int,
         default=5,
         help="limit the number of search results returned",
     )
-    build_ws.add_argument(
+    build_rrf.add_argument(
         "--k",
         type=float,
         default=60,
         help="adjust combination ranking from semantic+keyword search",
     )
+    build_rrf.add_argument(
+        "--enhance",
+        type=str,
+        choices=["spell", "rewrite", "expand", None],
+        default=None,
+        help="Query enhancement method with Gemini",
+    )
     # attach handler
-    build_ws.set_defaults(func=handle_hybrid_rrf)
+    build_rrf.set_defaults(func=handle_hybrid_rrf)
     return parser
 
 
+def setup_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s [%(levelname)s] %(message)s",
+    )
+
+
 def main() -> None:
+    setup_logging()
     parser = make_parser()
     args = parser.parse_args()
     args.func(args)

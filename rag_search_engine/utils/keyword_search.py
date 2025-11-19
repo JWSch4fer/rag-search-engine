@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 from collections import defaultdict
 import json
 import math
@@ -29,10 +29,15 @@ class KeywordSearch(BaseSearchDB):
         db_path: Path | str | None = None,
         force: bool = False,
     ) -> None:
+        """
+        - If docs_path is provided: BaseSearchDB will sync movies, and we will:
+          build/sync the inverted index (respecting force).
+        - If docs_path is None: open existing DB in query-only mode (no rebuild).
+        """
         super().__init__(docs_path=docs_path, db_path=db_path, force=force)
         self._init_keyword_schema()
         if self.docs_path:
-            self._build_or_sync_index()
+            self._build_or_sync_index(force=force)
 
     # ------------------------ schema ------------------------ #
     def _init_keyword_schema(self) -> None:
@@ -79,15 +84,17 @@ class KeywordSearch(BaseSearchDB):
         (count,) = cur.fetchone()
         return count
 
-    def _build_or_sync_index(self) -> None:
+    def _build_or_sync_index(self, force: bool) -> None:
         """
         Ensure inverted index matches current documents.
 
         Strategy:
           - If number of entries in doclen != number of docs, rebuild index.
         """
-        n_docs = len(self.documents)
-        if self._index_doc_count() == n_docs:
+        if force:
+            self._rebuild_index()
+
+        if self._index_doc_count() == len(self.documents):
             return  # assume synced
 
         self._rebuild_index()
@@ -259,4 +266,42 @@ class KeywordSearch(BaseSearchDB):
 
         return results
 
+    # ------------------------ Verify helpers ------------------------ #
+    def verify_db(self) -> None:
+        cur = self.conn.cursor()
 
+        # Movies (from BaseSearchDB)
+        cur.execute("SELECT COUNT(*) FROM movies")
+        (movie_count,) = cur.fetchone()
+
+        # Terms
+        cur.execute("SELECT COUNT(*) FROM terms")
+        (term_count,) = cur.fetchone()
+
+        # Postings
+        cur.execute("SELECT COUNT(*) FROM postings")
+        (posting_count,) = cur.fetchone()
+
+        # Doc lengths
+        cur.execute("SELECT COUNT(*) FROM doclen")
+        (doclen_count,) = cur.fetchone()
+
+        # Avg doc length (BM25 uses this)
+        cur.execute("SELECT AVG(length) FROM doclen")
+        (avgdl,) = cur.fetchone()
+        avgdl = avgdl or 0.0
+
+        print(f"Keyword index DB path:   {self.db_path}")
+        print(f"Movies table count:      {movie_count}")
+        print(f"Terms table count:       {term_count}")
+        print(f"Postings table count:    {posting_count}")
+        print(f"Doclen table count:      {doclen_count}")
+        print(f"Average doc length:      {avgdl:.2f}")
+
+        # Simple consistency checks
+        if movie_count != doclen_count:
+            print("WARNING: movies.count != doclen.count (index may be out of sync)")
+        if posting_count == 0:
+            print("WARNING: postings table is empty")
+        if term_count == 0:
+            print("WARNING: terms table is empty")

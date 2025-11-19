@@ -15,23 +15,21 @@ from rag_search_engine.utils.basesearch_db import DEFAULT_DB_PATH
 def handle_build(args: argparse.Namespace) -> None:
     # Build DB for keyword search
     ks = KeywordSearch.build_from_docs(
-        docs_path=args.file_path,
-        db_path=DEFAULT_DB_PATH,
-        force=args.force,  # rebuild movies from JSON
+        docs_path=args.file_path, db_path=DEFAULT_DB_PATH, force=args.force
     )
-    print(f"SQLite DB path: {ks.db_path}")
-    print(f"Docs source:    {ks.docs_path}")
-    print(f"Number of docs: {len(ks.documents)}")
-    print(f"Movies table:   {ks.count_movies()} rows")
+    # print(f"SQLite DB path: {ks.db_path}")
+    # print(f"Docs source:    {ks.docs_path}")
+    # print(f"Number of docs: {len(ks.documents)}")
+    # print(f"Movies table:   {ks.count_movies()} rows")
+    ks.verify_db()
     ks.close()
-
+    print("--------------------------------------------------------------")
     # Build DB for semantic search
     ssc = SemanticSearch.build_from_docs(
-        docs_path=args.file_path,
-        db_path=DEFAULT_DB_PATH,
-        force=args.force,  # rebuild movies from JSON
+        docs_path=args.file_path, db_path=DEFAULT_DB_PATH, force=args.force
     )
-    print(f"SemanticSearch dimensions: {ssc.embedding_dim}")
+    # print(f"SemanticSearch dimensions: {ssc.embedding_dim}")
+    ssc.verify_db()
     ssc.close()
 
 

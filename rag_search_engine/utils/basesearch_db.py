@@ -31,6 +31,7 @@ class BaseSearchDB:
     ) -> None:
         self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.force = force
 
         self.docs_path: Optional[Path] = Path(docs_path) if docs_path else None
         self.documents: Optional[List[Dict[str, Any]]] = None
@@ -46,8 +47,8 @@ class BaseSearchDB:
         self._init_base_schema()
 
         # Only sync movies table if we have documents
-        if self.documents is not None:
-            self._ensure_movies_synced(force=force)
+        if self.documents:
+            self._ensure_movies_synced()
 
     # ---------------------- base schema ---------------------- #
     def _init_base_schema(self) -> None:
@@ -79,13 +80,9 @@ class BaseSearchDB:
         )
         self.conn.commit()
 
-    def _ensure_movies_synced(self, force: bool = False) -> None:
+    def _ensure_movies_synced(self) -> None:
         """Ensure movies table has same doc count as documents (or rebuild if forced)."""
         if self.documents is None:
-            return
-
-        if force:
-            self._rebuild_movies_table()
             return
 
         n_docs = len(self.documents)
@@ -112,7 +109,7 @@ class BaseSearchDB:
         cls,
         docs_path: str | Path,
         db_path: str | Path | None = None,
-        force: bool = True,
+        force: bool = False,
     ) -> "BaseSearchDB":
         """
         Build/sync the movies table from docs_path and return a ready DB object.
@@ -128,5 +125,4 @@ class BaseSearchDB:
         Open an existing DB
         Does not touch the movies table.
         """
-        return cls(db_path=db_path, docs_path=None, force=False)
-
+        return cls(db_path=db_path, docs_path=None)

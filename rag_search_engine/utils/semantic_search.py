@@ -1,5 +1,4 @@
 # rag_search_engine/utils/semantic_search.py
-# rag_search_engine/utils/semantic_search.py
 from __future__ import annotations
 
 from pathlib import Path

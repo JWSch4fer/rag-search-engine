@@ -3,6 +3,7 @@ import argparse
 
 from rag_search_engine.utils.semantic_search import SemanticSearch
 from rag_search_engine.utils.keyword_search import KeywordSearch
+from rag_search_engine.utils.hybrid_search import HybridSearch
 import os
 from dotenv import load_dotenv
 
@@ -10,6 +11,30 @@ from rag_search_engine.utils.basesearch_db import DEFAULT_DB_PATH
 
 # load_dotenv()
 # api_key = os.environ.get("GEMINI_API_KEY")
+
+
+def handle_hybrid_weight(args: argparse.Namespace):
+    hs = HybridSearch(
+        docs_path=None,
+        db_path=DEFAULT_DB_PATH,
+    )
+    hits = hs.weighted_search(args.query, alpha=args.alpha, limit=args.limit)
+
+    for h in hits:
+        print(f"{h['score']:.4f}  {h['title']}")
+    hs.close()
+
+
+def handle_hybrid_rrf(args: argparse.Namespace):
+    hs = HybridSearch(
+        docs_path=None,
+        db_path=DEFAULT_DB_PATH,
+    )
+    hits = hs.rrf_search(args.query, k=args.k, limit=args.limit)
+
+    for h in hits:
+        print(f"{h['score']:.4f}  {h['title']}")
+    hs.close()
 
 
 def handle_build(args: argparse.Namespace) -> None:
@@ -113,6 +138,59 @@ def make_parser() -> argparse.ArgumentParser:
     # attach handler
     build_ssc.set_defaults(func=handle_semantic_search)
 
+    # ________________________________________________________________________________
+    # ___________________________hybrid search________________________________________
+    # ________________________________________________________________________________
+    build_ws = subparsers.add_parser(
+        "weighted_search",
+        help="combine weighted semantic search results with keyword results",
+    )
+    build_ws.add_argument(
+        "query",
+        type=str,
+        help="Path to source data (default: %(default)s)",
+    )
+    build_ws.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="limit the number of search results returned",
+    )
+    build_ws.add_argument(
+        "--alpha",
+        type=float,
+        default=0.5,
+        help="change the weight of semantic vs keyword results (larger value leans toward keyword)",
+    )
+    # attach handler
+    build_ws.set_defaults(func=handle_hybrid_weight)
+
+    # ________________________________________________________________________________
+    # ___________________________hybrid search rrfl___________________________________
+    # ________________________________________________________________________________
+    build_ws = subparsers.add_parser(
+        "rrf_search",
+        help="combine weighted semantic search results with keyword results",
+    )
+    build_ws.add_argument(
+        "query",
+        type=str,
+        help="Path to source data (default: %(default)s)",
+    )
+    build_ws.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="limit the number of search results returned",
+    )
+    build_ws.add_argument(
+        "--k",
+        type=float,
+        default=60,
+        help="adjust combination ranking from semantic+keyword search",
+    )
+    # attach handler
+    build_ws.set_defaults(func=handle_hybrid_rrf)
     return parser
 
 

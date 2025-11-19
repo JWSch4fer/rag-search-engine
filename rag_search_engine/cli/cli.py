@@ -22,17 +22,32 @@ def handle_hybrid_weight(args: argparse.Namespace):
 
 
 def handle_hybrid_rrf(args: argparse.Namespace):
+    # if enhance is None this doens't change query
     gi = Gemini()
     query = gi.enhance(args.enhance, args.query)
+    # run hybrid search
     hs = HybridSearch(
         docs_path=None,
         db_path=DEFAULT_DB_PATH,
     )
-    hits = hs.rrf_search(query, k=args.k, limit=args.limit)
+    hits = hs.rrf_search(
+        query, k=args.k, limit=args.limit, rerank_method=args.rerank_method
+    )
+    # rerank if asked to or print results as is
     print(f"Enhanced query ({args.enhance}): '{args.query}' -> '{query}'\n")
-
-    for h in hits:
-        print(f"{h['score']:.4f}  {h['title']}")
+    if args.rerank_method == "individual" or args.rerank_method == "batch":
+        for i, doc in enumerate(hits, start=1):
+            line = f"{i}. {doc['title']}"
+            if "rerank_score" in doc:
+                line += f"\n   Rerank Score: {doc['rerank_score']:.3f}/10"
+            line += f"\n   RRF Score: {doc['score']:.3f}"
+            line += f"\n   BM25 Rank: {doc.get('bm25_rank')}, Semantic Rank: {doc.get('sem_rank')}"
+            line += f"\n   {doc['description'][:80]}..."
+            print(line)
+            print()
+    else:
+        for h in hits:
+            print(f"{h['score']:.4f}  {h['title']}")
     hs.close()
 
 
@@ -190,7 +205,13 @@ def make_parser() -> argparse.ArgumentParser:
         default=None,
         help="Query enhancement method with Gemini",
     )
-    # attach handler
+    build_rrf.add_argument(
+        "--rerank-method",
+        type=str,
+        choices=["individual", "batch", None],
+        default=None,
+        help="rerank results with Gemini",
+    )  # attach handler
     build_rrf.set_defaults(func=handle_hybrid_rrf)
     return parser
 

@@ -1,3 +1,6 @@
+from typing import Dict, Any, List
+
+
 def gemini_method(method: str, query: str) -> str:
     match method:
         case "spell":
@@ -47,5 +50,45 @@ def gemini_method(method: str, query: str) -> str:
             EXPAND += "Expanded query:"
             return EXPAND
 
+        case _:
+            return ""
+
+
+def gemini_reranking(
+    query: str, docs: Dict[str, Any] | List[Dict[str, Any]], method: str
+) -> str:
+    match method:
+        case "individual":
+            INDIVIDUAL = "Rate how well this movie matches the search query.\n"
+            INDIVIDUAL = "NOTE: you may not ask follow up questions the response should be a score.\n\n"
+            INDIVIDUAL = f'Query: "{query}"\n\n'
+            INDIVIDUAL += f"Movie: {docs['title']} - {docs['description']}\n\n"
+            INDIVIDUAL += "Consider:\n"
+            INDIVIDUAL += " - Direct relevance to query\n"
+            INDIVIDUAL += " - User intent (what they're looking for)\n"
+            INDIVIDUAL += " - Content appropriateness\n\n"
+            INDIVIDUAL += "Rate 0-10 (10 = perfect match).\n"
+            INDIVIDUAL += "Give me ONLY the number in your response, no other text or explanation.\n"
+            INDIVIDUAL += "Score:"
+            return INDIVIDUAL
+        case "batch":
+            # Build the Movies: section
+            lines = []
+            for doc in docs:
+                doc_id = doc.get("id")
+                title = doc.get("title", "")
+                desc = doc.get("description", "")
+                desc = desc.replace("\n", " ").strip()
+                lines.append(f"ID: {doc_id}\nTitle: {title}\nDescription: {desc}")
+
+            BATCH = "Rank these movies by relevance to the search query.\n\n"
+            BATCH += f'Query: "{query}"\n\n'
+            BATCH += "Movies:\n"
+            BATCH += "{:}".format("\n\n".join(lines))
+            BATCH += "-------------------------------------------------------------\n"
+            BATCH += "Return ONLY the IDs in order of relevance (best match first).\n"
+            BATCH += "Return a valid JSON list, nothing else. For example:\n"
+            BATCH += "[75, 12, 34, 2, 1]\n"
+            return BATCH
         case _:
             return ""

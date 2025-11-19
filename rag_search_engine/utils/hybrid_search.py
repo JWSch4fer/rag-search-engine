@@ -3,11 +3,15 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set
+import time, logging
 
 from rag_search_engine.utils.basesearch_db import DEFAULT_DB_PATH
 from rag_search_engine.utils.keyword_search import KeywordSearch
 from rag_search_engine.utils.semantic_search import SemanticSearch
 from rag_search_engine.utils.utils import min_max_norm, rrf_score
+from rag_search_engine.llm.gemini import Gemini
+
+logger = logging.getLogger(__name__)
 
 
 class HybridSearch:
@@ -180,6 +184,7 @@ class HybridSearch:
         query: str,
         k: int = 60,
         limit: int = 10,
+        rerank_method: str | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Reciprocal Rank Fusion (RRF) hybrid search.
@@ -256,6 +261,53 @@ class HybridSearch:
             )
 
         results.sort(key=lambda r: r["score"], reverse=True)
+
+        # ---------------- LLM-based individual reranking ---------------- #
+        if rerank_method == "individual":
+            logger.info(
+                "Reranking top %d results using individual LLM method...", limit
+            )
+            gi = Gemini()
+
+            for idx, doc in enumerate(results):
+                # Respect rate limits; consider increasing if you hit errors.
+                if idx > 0:
+                    time.sleep(3)
+
+                rerank_score = gi.rerank_document(query, doc, rerank_method)
+                doc["rerank_score"] = rerank_score
+
+            # Sort primarily by rerank_score, break ties by RRF score
+            results.sort(
+                key=lambda r: (r.get("rerank_score", 0.0), r["score"]),
+                reverse=True,
+            )
+
+        # ---------------- batch rerank ---------------- #
+        if rerank_method == "batch":
+            logger.info("Reranking top %d results using batch LLM method...", limit)
+            gi = Gemini()
+            ranked_ids = gi.rerank_batch(query, results, rerank_method)
+            # map id -> rerank_rank (1 = best)
+            rank_map: Dict[int, int] = {
+                doc_id: idx for idx, doc_id in enumerate(ranked_ids, start=1)
+            }
+
+            for doc in results:
+                doc_id = doc["id"]
+                doc["rerank_rank"] = rank_map.get(doc_id)
+
+            # Sort by rerank_rank (1 is best). Docs not in ranked_ids go last.
+            results.sort(
+                key=lambda r: (
+                    r.get("rerank_rank") is None,
+                    r.get("rerank_rank") or 1e9,
+                )
+            )
+            return results[:limit]
+
+        # Unknown method → fallback
+        logger.warning("Unknown rerank_method=%r, using base RRF only", rerank_method)
         return results[:limit]
 
     # ---------------- Cleanup ---------------- #

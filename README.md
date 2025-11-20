@@ -12,16 +12,10 @@ Hybrid movie search engine with:
 
 
 
-
-rag-search ...
-so you can build an index and run different kinds of searches from the terminal.
-
-Features
 ### 1. Clean data model
 
 **NOTE**: Input is a JSON file with a top-level "movies" array, e.g.:
 
-json
 ```json
 {
   "movies": [
@@ -40,7 +34,7 @@ json
 ```
 ### 2. Text normalization & tokenization
 
-- Fixes weird encodings and HTML entities (fix_text)
+- Fixes encodings and HTML entities (fix_text)
 
 - Normalizes Unicode & folds diacritics (e.g. café → cafe)
 
@@ -103,10 +97,10 @@ json
 - individual – score each movie independently given the query (0–10 style prompt)
 
 - batch – rank a whole list of candidates, returning IDs in relevance order
-
+⚠️
 These use the official google-genai Python client (from google import genai).
-
-**NOTE** ⚠️ LLM features are optional. The core search engine works without them.⚠️ 
+**NOTE**  LLM features are optional. The core search engine works without them.
+⚠️
 
 ## Installation
 

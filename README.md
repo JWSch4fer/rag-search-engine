@@ -2,14 +2,14 @@
 
 Hybrid movie search engine with:
 
-```
+
 - **BM25 keyword search** (inverted index in SQLite)
 - **Semantic vector search** using `sentence-transformers` + `sqlite-vec`
 - **Hybrid ranking** (linear blend or reciprocal-rank fusion)
 - Optional **Gemini** integration for:
-  - Spell-checking / rewriting / expanding queries
-  - LLM-based reranking of search results
-```
+    - Spell-checking / rewriting / expanding queries
+    - LLM-based reranking of search results
+
 
 
 

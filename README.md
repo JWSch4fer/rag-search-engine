@@ -162,28 +162,36 @@ rag-search hybrid_rrf "funy animted toyz" \
 # 0.0164  The Christmas Toy
 
 
-rag-search hybrid_rrf "funy animted toyz" \
-  --enhance spell \
-  --limit 5
-  --rerank-method batch
+rag-search rrf-search "funny bear action"\
+    --enhance expand\
+    --rerank # 'individual' or 'batch' but 'batch' is much faster
 # RRF + query enhancement + LLM reranking:
 
-# Enhanced query (spell): 'funy animted toyz' -> '"funny animated toys"
+# Enhanced query (expand): 'funny bear action' -> '"funny bear action" -> "funny comedy humorous bear grizzly action adventure chase fight hilarious"
 
-# 1. The Christmas Toy
-#    RRF Score: 0.016
-#    BM25 Rank: None, Semantic Rank: 1
-#    When no people are around, the toys still play in the playroom. But since a toy ...
-
-# 2. Toys
-#    RRF Score: 0.017
-#    BM25 Rank: None, Semantic Rank: 0
-#    Amid a sea of gently-waving tall grass, lies the factory of Zevo Toys, founded b...
-
-# 3. The Curse of the Were-Rabbit
-#    RRF Score: 0.016
-#    BM25 Rank: 4, Semantic Rank: None
-#    Tottington Hall's annual Giant Vegetable Competition is approaching. The winner ...
+# 1. The Great Outdoors
+#    Rerank Score: 9.000/10
+#    RRF Score: 0.028
+#    BM25 Rank: 12, Semantic Rank: 9
+#    Chicagoans Chet Ripley, his wife Connie, and their sons Buck and Ben arrive at t...
+# 
+# 2. Yogi Bear
+#    Rerank Score: 9.000/10
+#    RRF Score: 0.015
+#    BM25 Rank: 9, Semantic Rank: None
+#    In the beautiful Jellystone Park, Yogi Bear and his loyal companion Boo-Boo spen...
+# 
+# 3. Open Season
+#    Rerank Score: 9.000/10
+#    RRF Score: 0.014
+#    BM25 Rank: 10, Semantic Rank: None
+#    Boog is a massive 900-pound grizzly bear who has lived a comfortable, domesticat...
+# 
+# 4. Paddington
+#    Rerank Score: 9.000/10
+#    RRF Score: 0.013
+#    BM25 Rank: 15, Semantic Rank: None
+#    Deep in the rainforests of Peru, a young bear lives peacefully with his Aunt Luc...
 ```
 
 ## Running tests

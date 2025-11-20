@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import logging, time, json
-from typing import Optional, Dict, Any, List
+import json
+import logging
+import time
+from typing import Any, Dict, List, Optional, Callable
 
 from rag_search_engine.config import GEMINI_API_KEY
 from google import genai
+from google.genai import errors as genai_errors  # type: ignore[import]
 
 from rag_search_engine.llm.prompt import gemini_method, gemini_reranking
 
@@ -13,12 +16,15 @@ logger = logging.getLogger(__name__)
 
 class Gemini:
     """
-    Small wrapper around a Gemini model for spell-checking movie queries.
+    Small wrapper around a Gemini model for query enhancement and reranking.
 
     Best practices:
     - API key is read from an environment variable by default (GEMINI_API_KEY).
     - Query text is *optionally* logged; consider masking/redacting if queries can contain PII.
     """
+
+    # How long to sleep (seconds) when we hit a RESOURCE_EXHAUSTED / 429 quota error
+    RETRY_SLEEP_SECONDS: int = 30
 
     def __init__(
         self,
@@ -35,9 +41,66 @@ class Gemini:
         self.model_name = model
         self.client = genai.Client(api_key=api_key)
 
+    # ------------------------------------------------------------------
+    # Internal helper for rate-limited calls
+    # ------------------------------------------------------------------
+    @classmethod
+    def _generate_with_retry(
+        cls,
+        func: Callable[[], Any],
+        *,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        """
+        Call `func` (typically a `generate_content` call), retrying once on
+        RESOURCE_EXHAUSTED / 429 with a 10s backoff.
+
+        Args:
+            func: Zero-argument callable performing the Gemini API call.
+            context: Optional context dict included in warning logs.
+
+        Returns:
+            Whatever `func` returns (usually a `GenerateContentResponse`).
+
+        Raises:
+            Any non-quota `ClientError`, or quota errors after the second attempt.
+        """
+        last_exc: Optional[Exception] = None
+
+        for attempt in (1, 2):
+            try:
+                return func()
+            except genai_errors.ClientError as exc:  # type: ignore[attr-defined]
+                last_exc = exc
+                is_quota = getattr(
+                    exc, "code", None
+                ) == 429 or "RESOURCE_EXHAUSTED" in str(exc)
+                if attempt == 1 and is_quota:
+                    logger.warning(
+                        "Gemini quota exceeded; sleeping %s seconds before retry",
+                        cls.RETRY_SLEEP_SECONDS,
+                        extra={"context": context or {}},
+                    )
+                    time.sleep(cls.RETRY_SLEEP_SECONDS)
+                    continue
+                # Not a quota error or already retried once → bubble up
+                raise
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("Gemini call failed without a response")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def enhance(self, method: str, query: str) -> str:
         """
-        Use Gemini to correct obvious spelling errors in a movie search query.
+        Use Gemini to enhance a movie search query.
+
+        Methods:
+            - "spell":   fix obvious spelling errors.
+            - "rewrite": rewrite the query to be clearer / more natural.
+            - "expand":  expand the query with related terms.
 
         Logging:
         - Duration of the call.
@@ -56,10 +119,18 @@ class Gemini:
         response_text: str = query  # default to original query on failure
 
         try:
-            content = gemini_method(method, query)
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=content,
+            contents = gemini_method(method, query)
+
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=contents,
+                ),
+                context={
+                    "kind": "enhance",
+                    "method": method,
+                    "model": self.model_name,
+                },
             )
 
             # Some SDKs expose `response.text`; adjust if your version differs.
@@ -73,10 +144,8 @@ class Gemini:
             response_tokens = getattr(usage, "candidates_token_count", None)
             total_tokens = getattr(usage, "total_token_count", None)
 
-            # Log a concise, structured line
-            # NOTE: consider truncating query/response if logging to shared systems
             logger.info(
-                "Gemini spell_check completed",
+                "Gemini enhance completed",
                 extra={
                     "model": self.model_name,
                     "duration_s": duration_s,
@@ -84,77 +153,68 @@ class Gemini:
                     "response_tokens": response_tokens,
                     "total_tokens": total_tokens,
                     # Be cautious with these in production if PII is possible:
+                    "method": method,
                     "query_preview": query[:100],
                     "response_preview": response_text[:100],
                     "success": True,
                 },
             )
 
-        except Exception as e:
+        except Exception:
             duration_s = time.perf_counter() - start_time
 
             # Log the error but do NOT leak secrets or full response.
             logger.exception(
-                "Gemini spell_check failed",
+                "Gemini enhance failed",
                 extra={
                     "model": self.model_name,
                     "duration_s": duration_s,
+                    "method": method,
                     # Again, consider truncation / masking in real deployments:
                     "query_preview": query[:100],
                     "success": False,
                 },
             )
 
-            # Decide how you want to fail:
-            # - return original query (graceful degradation)
-            # - or raise the exception
+            # Graceful degradation: return original query
             return query
+
         return response_text
 
     def rerank_document(self, query: str, doc: Dict[str, Any], method: str) -> float:
         """
         Ask Gemini to rate how well a single movie matches the search query.
 
-        Uses the "individual" rerank prompt:
-
-            Rate how well this movie matches the search query.
-
-            Query: "{query}"
-            Movie: {title} - {description}
-
-            Consider:
-            - Direct relevance to query
-            - User intent (what they're looking for)
-            - Content appropriateness
-
-            Rate 0-10 (10 = perfect match).
-            Give me ONLY the number in your response, no other text or explanation.
-
-            Score:
-
-
-        Uses the "batch" rerank prompt:
+        Intended for "individual" rerank mode. The prompt text is built by
+        `gemini_reranking(method, query, doc)`.
 
         Returns:
-            A float in [0, 10]. If parsing fails, returns 0.0.
+            A float score in [0, 10]. If parsing fails or the call errors, returns 0.0.
         """
         title = doc.get("title", "")
-        # some of your structures use "description", others may use "document"
 
         prompt = gemini_reranking(query, doc, method)
         start_time = time.perf_counter()
         score: float = 0.0
 
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                ),
+                context={
+                    "kind": "rerank_document",
+                    "model": self.model_name,
+                    "title_preview": title[:80],
+                },
             )
+
             raw_text = getattr(response, "text", "").strip()
 
             # Try to parse the first number in the response
             # (handles cases like "8", "8.5", "8.5/10" etc.)
-            parsed = None
+            parsed: Optional[float] = None
             for token in raw_text.replace("/10", " ").split():
                 try:
                     parsed = float(token)
@@ -176,7 +236,7 @@ class Gemini:
             total_tokens = getattr(usage, "total_token_count", None)
 
             logger.info(
-                "Gemini rerank_document_individual completed",
+                "Gemini rerank_document completed",
                 extra={
                     "model": self.model_name,
                     "duration_s": duration_s,
@@ -194,7 +254,7 @@ class Gemini:
         except Exception:
             duration_s = time.perf_counter() - start_time
             logger.exception(
-                "Gemini rerank_document_individual failed",
+                "Gemini rerank_document failed",
                 extra={
                     "model": self.model_name,
                     "duration_s": duration_s,
@@ -214,7 +274,7 @@ class Gemini:
         Batch rerank: pass the query and a list of candidate docs, and receive
         a JSON list of IDs in order of relevance (best first).
 
-        Prompt shape:
+        Prompt shape (built by `gemini_reranking(method, query, docs)`):
 
             Rank these movies by relevance to the search query.
 
@@ -237,15 +297,26 @@ class Gemini:
             List of doc IDs in ranked order. If parsing fails, returns [].
         """
 
+        if not docs:
+            return []
+
         prompt = gemini_reranking(query, docs, method)
         start_time = time.perf_counter()
         ranked_ids: List[int] = []
 
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                ),
+                context={
+                    "kind": "rerank_batch",
+                    "model": self.model_name,
+                    "num_docs": len(docs),
+                },
             )
+
             raw_text = getattr(response, "text", "").strip()
 
             # Try direct JSON parse

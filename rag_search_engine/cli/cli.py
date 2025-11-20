@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import argparse, logging
+from sentence_transformers import CrossEncoder
 
 from rag_search_engine.llm.gemini import Gemini
 from rag_search_engine.utils.semantic_search import SemanticSearch
 from rag_search_engine.utils.keyword_search import KeywordSearch
 from rag_search_engine.utils.hybrid_search import HybridSearch
 from rag_search_engine.config import DEFAULT_DB_PATH
-from rag_search_engine.config import GEMINI_API_KEY
 
 
 def handle_hybrid_weight(args: argparse.Namespace):
@@ -22,32 +22,103 @@ def handle_hybrid_weight(args: argparse.Namespace):
 
 
 def handle_hybrid_rrf(args: argparse.Namespace):
-    # if enhance is None this doens't change query
+    # Enhance the query first (no-op if enhance is None)
     gi = Gemini()
     query = gi.enhance(args.enhance, args.query)
-    # run hybrid search
+
+    # When using any rerank method, gather more candidates for stronger reranking
+    gather_limit = args.limit * 2 if args.rerank_method else args.limit
+
     hs = HybridSearch(
         docs_path=None,
         db_path=DEFAULT_DB_PATH,
     )
-    hits = hs.rrf_search(
-        query, k=args.k, limit=args.limit, rerank_method=args.rerank_method
-    )
-    # rerank if asked to or print results as is
+
     print(f"Enhanced query ({args.enhance}): '{args.query}' -> '{query}'\n")
-    if args.rerank_method == "individual" or args.rerank_method == "batch":
+
+    # ---------------- Gemini-based reranking inside HybridSearch ---------------- #
+    if args.rerank_method in ("individual", "batch"):
+        hits = hs.rrf_search(
+            query,
+            k=args.k,
+            limit=gather_limit,
+            rerank_method=args.rerank_method,
+        )
+        # Show only the top `limit` after reranking
+        hits = hits[: args.limit]
+
         for i, doc in enumerate(hits, start=1):
             line = f"{i}. {doc['title']}"
             if "rerank_score" in doc:
                 line += f"\n   Rerank Score: {doc['rerank_score']:.3f}/10"
             line += f"\n   RRF Score: {doc['score']:.3f}"
-            line += f"\n   BM25 Rank: {doc.get('bm25_rank')}, Semantic Rank: {doc.get('sem_rank')}"
-            line += f"\n   {doc['description'][:80]}..."
+            line += (
+                f"\n   BM25 Rank: {doc.get('bm25_rank')}, "
+                f"Semantic Rank: {doc.get('sem_rank')}"
+            )
+            line += f"\n   {doc.get('description', '')[:80]}..."
             print(line)
             print()
+
+    # ---------------- Cross-encoder reranking ---------------- #
+    elif args.rerank_method == "cross_encoder":
+        # First, get base RRF results (no LLM reranking in HybridSearch)
+        hits = hs.rrf_search(
+            query,
+            k=args.k,
+            limit=gather_limit,
+            rerank_method=None,
+        )
+
+        # Build [query, document] pairs and track original RRF rank
+        pairs = []
+        for rank, doc in enumerate(hits, start=1):
+            doc["rrf_rank"] = rank
+            # Support both "document" and "description" keys
+            doc_text = f"{doc.get('title', '')} - {doc.get('document') or doc.get('description', '')}"
+            pairs.append([query, doc_text])
+
+        if pairs:
+            cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
+            scores = cross_encoder.predict(pairs)
+            for doc, score in zip(hits, scores):
+                doc["cross_encoder_score"] = float(score)
+
+            # Sort by cross-encoder score (desc)
+            hits.sort(
+                key=lambda d: d.get("cross_encoder_score", 0.0),
+                reverse=True,
+            )
+
+        # Truncate to the desired limit for display
+        hits = hits[: args.limit]
+
+        for i, doc in enumerate(hits, start=1):
+            line = f"{i}. {doc['title']}"
+            line += (
+                f"\n   Cross-Encoder Score: {doc.get('cross_encoder_score', 0.0):.4f}"
+            )
+            line += f"\n   RRF Rank: {doc.get('rrf_rank')}"
+            line += f"\n   RRF Score: {doc['score']:.4f}"
+            line += (
+                f"\n   BM25 Rank: {doc.get('bm25_rank')}, "
+                f"Semantic Rank: {doc.get('sem_rank')}"
+            )
+            line += f"\n   {doc.get('description', '')[:80]}..."
+            print(line)
+            print()
+
+    # ---------------- No reranking: plain RRF scores ---------------- #
     else:
+        hits = hs.rrf_search(
+            query,
+            k=args.k,
+            limit=args.limit,
+            rerank_method=None,
+        )
         for h in hits:
             print(f"{h['score']:.4f}  {h['title']}")
+
     hs.close()
 
 
@@ -208,7 +279,7 @@ def make_parser() -> argparse.ArgumentParser:
     build_rrf.add_argument(
         "--rerank-method",
         type=str,
-        choices=["individual", "batch", None],
+        choices=["individual", "batch", "cross_encoder", None],
         default=None,
         help="rerank results with Gemini",
     )  # attach handler

@@ -60,9 +60,9 @@ def gemini_reranking(
     match method:
         case "individual":
             INDIVIDUAL = "Rate how well this movie matches the search query.\n"
-            INDIVIDUAL = "NOTE: you may not ask follow up questions the response should be a score.\n\n"
-            INDIVIDUAL = f'Query: "{query}"\n\n'
-            INDIVIDUAL += f"Movie: {docs['title']} - {docs['description']}\n\n"
+            INDIVIDUAL += "NOTE: you may not ask follow up questions the response should be a score.\n\n"
+            INDIVIDUAL += f'Query: "{query}"\n\n'
+            INDIVIDUAL += f"\"Movie: {docs['title']} - {docs['description']}\n\n\""
             INDIVIDUAL += "Consider:\n"
             INDIVIDUAL += " - Direct relevance to query\n"
             INDIVIDUAL += " - User intent (what they're looking for)\n"

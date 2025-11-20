@@ -134,22 +134,20 @@ All commands share the same SQLite DB path (by default):
 rag-search build data/movies.json # Creates/updates the movies table.
 
 
-rag-search key_search "animated toys" --limit 5
+rag-search key_search "Toy" --limit 5
 # Sample output:
 # 
-# text
-# Copy code
-#  1. 2.3456  Toy Story
-#  2. 1.9876  Toy Story 2
+#  1. 8.5075  The Christmas Toy
+#  2. 8.0325  Silent Night, Deadly Night 5: The Toy Maker
+#  3. 7.9301  Toys
 #  ...
 
-rag-search semantic_search "dream inside a dream heist" --limit 5
+rag-search semantic_search "vampire comedy" --limit 5
 # Sample output (distance = lower is better):
 # 
-# text
-# Copy code
-#  1. 0.1234  Inception
-#  2. 0.2345  Paprika
+#  1. 0.2044  Vampire
+#  2. 0.2323  The Vampire Lovers
+#  3. 0.2764  Vampire Circus
 #  ...
 
 rag-search hybrid_rrf "funy animted toyz" \
@@ -157,7 +155,37 @@ rag-search hybrid_rrf "funy animted toyz" \
   --limit 5
 # RRF + query enhancement + LLM reranking:
 
+# Enhanced query (spell): 'funy animted toyz' -> '"funny animated toys"
+# 0.0167  Funny Man
+# 0.0167  Toys
+# 0.0164  La science des rêves
+# 0.0164  The Christmas Toy
+
+
+rag-search hybrid_rrf "funy animted toyz" \
+  --enhance spell \
+  --limit 5
+  --rerank-method batch
+# RRF + query enhancement + LLM reranking:
+
+# Enhanced query (spell): 'funy animted toyz' -> '"funny animated toys"
+
+# 1. The Christmas Toy
+#    RRF Score: 0.016
+#    BM25 Rank: None, Semantic Rank: 1
+#    When no people are around, the toys still play in the playroom. But since a toy ...
+
+# 2. Toys
+#    RRF Score: 0.017
+#    BM25 Rank: None, Semantic Rank: 0
+#    Amid a sea of gently-waving tall grass, lies the factory of Zevo Toys, founded b...
+
+# 3. The Curse of the Were-Rabbit
+#    RRF Score: 0.016
+#    BM25 Rank: 4, Semantic Rank: None
+#    Tottington Hall's annual Giant Vegetable Competition is approaching. The winner ...
 ```
+
 ## Running tests
 ```bash
 pip install pytest

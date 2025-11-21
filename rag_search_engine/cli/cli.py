@@ -6,8 +6,66 @@ from rag_search_engine.utils.semantic_search import SemanticSearch
 from rag_search_engine.utils.keyword_search import KeywordSearch
 from rag_search_engine.utils.hybrid_search import HybridSearch
 from rag_search_engine.config import DEFAULT_DB_PATH
+from rag_search_engine.llm.multimodal import (
+    verify_image_embedding,
+    image_search_command,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def handle_image_search(args: argparse.Namespace) -> None:
+    results = image_search_command(args.image_path, limit=5)
+
+    for idx, doc in enumerate(results, start=1):
+        title = str(doc.get("title", "")).strip()
+        sim = float(doc.get("similarity", 0.0))
+        desc = str(doc.get("description", "")).strip()
+
+        # Truncate description a bit for display
+        preview = (desc[:120] + "…") if len(desc) > 120 else desc
+
+        print(f"{idx}. {title} (similarity: {sim:.3f})")
+        print(f"   {preview}")
+        print()
+
+
+def handle_verify_image_embedding(args: argparse.Namespace) -> None:
+    """
+    CLI handler to verify image embeddings via MultimodalSearch.
+
+    Usage:
+        rag-search verify_image_embedding path/to/image.jpeg
+    """
+    verify_image_embedding(args.image_path)
+
+
+def handle_multimodal_rewrite(args: argparse.Namespace) -> None:
+    """
+    Multimodal query rewriting using Gemini: image + text -> rewritten text query.
+
+    Required args:
+      --image : path to an image file
+      --query : original text query to rewrite
+    """
+    image_path = args.image
+    query = args.query
+
+    logger.info(
+        "multimodal_rewrite command starting",
+        extra={
+            "image_path": image_path,
+            "query_preview": query[:100],
+        },
+    )
+
+    gi = Gemini()
+
+    rewritten, total_tokens = gi.rewrite_multimodal_query(image_path, query)
+
+    print(f"Rewritten query: {rewritten}")
+    if total_tokens is not None:
+        print(f"Total tokens:    {total_tokens}")
 
 
 def handle_question(args: argparse.Namespace) -> None:
@@ -36,7 +94,7 @@ def handle_question(args: argparse.Namespace) -> None:
             query=question,
             k=60,
             limit=limit,
-            rerank_method=None,
+            rerank_method="cross_encoder",
         )
     finally:
         hs.close()
@@ -100,7 +158,7 @@ def handle_citations(args: argparse.Namespace) -> None:
             query=query,
             k=60,
             limit=limit,
-            rerank_method=None,
+            rerank_method="cross_encoder",
         )
     finally:
         hs.close()
@@ -164,7 +222,7 @@ def handle_summarize(args: argparse.Namespace):
             query=query,
             k=60,
             limit=limit,
-            rerank_method=None,
+            rerank_method="cross_encoder",
         )
     finally:
         hs.close()
@@ -586,7 +644,50 @@ def make_parser() -> argparse.ArgumentParser:
         help="Number of top results to retrieve (default: 5)",
     )
     build_quesiton.set_defaults(func=handle_question)
-
+    # ________________________________________________________________________________
+    # _______________________________rag multimodal image_____________________________
+    # ________________________________________________________________________________
+    build_mm_image = subparsers.add_parser(
+        "multimodal_image",
+        help="Rewrite a text query using an image and Gemini (multimodal)",
+    )
+    build_mm_image.add_argument(
+        "--image",
+        required=True,
+        help="Path to the image file (e.g., data/paddington.jpeg)",
+    )
+    build_mm_image.add_argument(
+        "--query",
+        required=True,
+        help="Original text query to rewrite based on the image",
+    )
+    build_mm_image.set_defaults(func=handle_multimodal_rewrite)
+    # ________________________________________________________________________________
+    # _______________________________rag multimodal image_____________________________
+    # ________________________________________________________________________________
+    verify_img_parser = subparsers.add_parser(
+        "verify_image_embedding",
+        help="Generate an image embedding (CLIP) and print its dimensionality",
+    )
+    verify_img_parser.add_argument(
+        "image_path",
+        type=str,
+        help="Path to the image file (e.g., data/paddington.jpeg)",
+    )
+    verify_img_parser.set_defaults(func=handle_verify_image_embedding)
+    # ________________________________________________________________________________
+    # _______________________________rag multimodal search_____________________________
+    # ________________________________________________________________________________
+    cmd_search = subparsers.add_parser(
+        "image_search",
+        help="Search the movie dataset using an image (CLIP-based similarity)",
+    )
+    cmd_search.add_argument(
+        "image_path",
+        type=str,
+        help="Path to the image file (e.g., data/paddington.jpeg)",
+    )
+    cmd_search.set_defaults(func=handle_image_search)
     return parser
 
 

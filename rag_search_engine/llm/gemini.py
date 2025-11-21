@@ -5,8 +5,10 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Callable
 
+import mimetypes
 from rag_search_engine.config import GEMINI_API_KEY
 from google import genai
+from google.genai import types as genai_types
 from google.genai import errors as genai_errors  # type: ignore[import]
 
 from rag_search_engine.llm.prompt import (
@@ -840,3 +842,130 @@ class Gemini:
 
         return answer
 
+    def rewrite_multimodal_query(
+        self,
+        image_path: str,
+        query: str,
+    ) -> tuple[str, Optional[int]]:
+        """
+        Use Gemini multimodal (image + text) to rewrite a search query.
+
+        Args:
+            image_path: path to the image file.
+            query: original text query to rewrite.
+
+        Returns:
+            (rewritten_query, total_token_count_or_None)
+        """
+        query = query.strip()
+
+        # Guess MIME type from file extension, default to image/jpeg
+        mime, _ = mimetypes.guess_type(image_path)
+        mime = mime or "image/jpeg"
+
+        logger.info(
+            "Gemini rewrite_multimodal_query starting",
+            extra={
+                "model": self.model_name,
+                "image_path": image_path,
+                "mime": mime,
+                "query_preview": query[:100],
+            },
+        )
+
+        # Read image bytes
+        try:
+            with open(image_path, "rb") as f:
+                img = f.read()
+        except OSError as exc:
+            logger.exception(
+                "Failed to read image file for rewrite_multimodal_query",
+                extra={"image_path": image_path},
+            )
+            # Fall back: no rewrite, return original query
+            return query, None
+
+        # System prompt describing task
+        system_prompt = (
+            "Given the included image and text query, rewrite the text query to improve search "
+            "results from a movie database. Make sure to:\n"
+            "- Synthesize visual and textual information\n"
+            "- Focus on movie-specific details (actors, scenes, style, etc.)\n"
+            "- Return only the rewritten query, without any additional commentary"
+        )
+
+        # Build parts: system prompt, image bytes, and original query
+        parts = [
+            system_prompt,
+            genai_types.Part.from_bytes(data=img, mime_type=mime),
+            query,
+        ]
+
+        logger.debug(
+            "rewrite_multimodal_query: sending multimodal request with mime=%s and query_preview=%s",
+            mime,
+            query[:100],
+        )
+
+        start_time = time.perf_counter()
+        rewritten: str = query
+        total_tokens: Optional[int] = None
+
+        try:
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=parts,
+                ),
+                context={
+                    "kind": "rewrite_multimodal_query",
+                    "model": self.model_name,
+                    "mime": mime,
+                },
+            )
+
+            rewritten = (getattr(response, "text", "") or query).strip()
+
+            usage = getattr(response, "usage_metadata", None)
+            total_tokens = getattr(usage, "total_token_count", None)
+            prompt_tokens = getattr(usage, "prompt_token_count", None)
+            response_tokens = getattr(usage, "candidates_token_count", None)
+
+            duration_s = time.perf_counter() - start_time
+
+            logger.debug(
+                "rewrite_multimodal_query: rewritten_preview=%s",
+                rewritten[:200],
+            )
+
+            logger.info(
+                "Gemini rewrite_multimodal_query completed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "prompt_tokens": prompt_tokens,
+                    "response_tokens": response_tokens,
+                    "total_tokens": total_tokens,
+                    "query_preview": query[:100],
+                    "rewritten_preview": rewritten[:100],
+                    "success": True,
+                },
+            )
+
+        except Exception:
+            duration_s = time.perf_counter() - start_time
+            logger.exception(
+                "Gemini rewrite_multimodal_query failed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "query_preview": query[:100],
+                    "image_path": image_path,
+                    "success": False,
+                },
+            )
+            # On failure, just return original query and no token info
+            rewritten = query
+            total_tokens = None
+
+        return rewritten, total_tokens

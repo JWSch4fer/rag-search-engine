@@ -111,3 +111,70 @@ def gemini_evaluation(query: str, formatted_results: List[str]) -> str:
     EVALUATION += "Return a valid JSON list, nothing else. For example:\n\n"
     EVALUATION += "[2, 0, 3, 2, 0, 1]"
     return EVALUATION
+
+
+def gemini_rag_basic(query: str, docs: str) -> str:
+    RAG_BASIC = (
+        "Answer the question or provide information based on the provided documents. "
+        "This should be tailored to Hoopla users. Hoopla is a movie streaming service.\n\n"
+    )
+    RAG_BASIC += f"Query: {query}\n\n"
+    RAG_BASIC += "Documents:\n"
+    RAG_BASIC += f"{docs}\n\n"
+    RAG_BASIC += "Provide a comprehensive answer that addresses the query:"
+    return RAG_BASIC
+
+
+def gemini_rag_summarize(query: str, docs: str) -> str:
+    RAG_SUMMARY = (
+        "Provide information useful to this query by synthesizing information from multiple "
+        "search results in detail.\n"
+    )
+    RAG_SUMMARY += "The goal is to provide comprehensive information so that users know what their options are.\n"
+    RAG_SUMMARY += (
+        "Your response should be information-dense and concise, with several key pieces of "
+        "information about the genre, plot, etc. of each movie.\n"
+    )
+    RAG_SUMMARY += "This should be tailored to Hoopla users. Hoopla is a movie streaming service.\n"
+    RAG_SUMMARY += f"Query: {query}\n"
+    RAG_SUMMARY += "Search Results:\n"
+    RAG_SUMMARY += f"{docs}\n"
+    RAG_SUMMARY += "Provide a comprehensive 3–4 sentence answer that combines information from multiple sources:\n"
+    return RAG_SUMMARY
+
+
+def gemini_rag_citations(query: str, docs: str) -> str:
+    RAG_CITATIONS = "Answer the question or provide information based on the provided documents.\n\n"
+    RAG_CITATIONS += "This should be tailored to Hoopla users. Hoopla is a movie streaming service.\n\n"
+    RAG_CITATIONS += (
+        "If not enough information is available to give a good answer, say so but give as good of an "
+        "answer as you can while citing the sources you have.\n\n"
+    )
+    RAG_CITATIONS += f"Query: {query}\n\n"
+    RAG_CITATIONS += "Documents:\n"
+    RAG_CITATIONS += f"{docs}\n\n"
+    RAG_CITATIONS += "Instructions:\n"
+    RAG_CITATIONS += "- Provide a comprehensive answer that addresses the query\n"
+    RAG_CITATIONS += (
+        "- Cite sources using [1], [2], etc. format when referencing information\n"
+    )
+    RAG_CITATIONS += "- If sources disagree, mention the different viewpoints\n"
+    RAG_CITATIONS += "- If the answer isn't in the documents, say \"I don't have enough information\"\n"
+    RAG_CITATIONS += "- Be direct and informative\n\n"
+    RAG_CITATIONS += "Answer:"
+    return RAG_CITATIONS
+
+
+def gemini_rag_answer(query: str, context: str) -> str:
+    RAG_ANSWER = "Answer the user's question based on the provided movies that are available on Hoopla.\n\n"
+    RAG_ANSWER += "This should be tailored to Hoopla users. Hoopla is a movie streaming service.\n\n"
+    RAG_ANSWER += f"Question: {query}\n\n"
+    RAG_ANSWER += "Documents:\n"
+    RAG_ANSWER += f"{context}\n\n"
+    RAG_ANSWER += "Instructions:\n"
+    RAG_ANSWER += "- Answer questions directly and concisely\n"
+    RAG_ANSWER += "- Be casual and conversational\n"
+    RAG_ANSWER += "- Don't be cringe or hype-y\n"
+    RAG_ANSWER += "- Talk like a normal person would in a chat conversation\n\n"
+    RAG_ANSWER += "Answer:"
+    return RAG_ANSWER

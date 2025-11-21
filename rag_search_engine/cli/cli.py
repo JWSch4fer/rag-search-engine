@@ -10,6 +10,197 @@ from rag_search_engine.config import DEFAULT_DB_PATH
 logger = logging.getLogger(__name__)
 
 
+def handle_question(args: argparse.Namespace) -> None:
+    """
+    'question' command:
+    - Load the movies dataset and set up HybridSearch.
+    - Perform an RRF search using the provided question.
+    - Use Gemini to answer the question based on the search results.
+    - Print search results and the answer.
+    """
+    question = args.question
+    limit = args.limit
+
+    logger.info(
+        "question command starting",
+        extra={
+            "question": question,
+            "limit": limit,
+        },
+    )
+
+    # Set up HybridSearch with the movies dataset
+    hs = HybridSearch(docs_path=None, db_path=DEFAULT_DB_PATH)
+    try:
+        hits = hs.rrf_search(
+            query=question,
+            k=60,
+            limit=limit,
+            rerank_method=None,
+        )
+    finally:
+        hs.close()
+
+    if not hits:
+        print("No search results found.")
+        return
+
+    # Titles for printing
+    titles = [str(h.get("title", "")).strip() for h in hits if h.get("title")]
+    logger.debug(
+        "question search results titles: %s",
+        titles,
+    )
+
+    # Build context string for Gemini
+    # e.g. "- Jurassic Park: dinosaurs in a theme park..."
+    context_lines = []
+    for h in hits:
+        title = str(h.get("title", "")).strip()
+        desc = str(h.get("description", h.get("document", ""))).strip()
+        context_lines.append(f"- {title}: {desc}")
+    context_str = "\n".join(context_lines)
+
+    # Ask Gemini to answer the question based on these movies
+    gi = Gemini()
+    answer = gi.answer_question(question, context_str)
+
+    # Print in requested format
+    print("Search Results:")
+    for t in titles:
+        print(f"  - {t}")
+    print()
+    print("Answer:")
+    print(answer)
+
+
+def handle_citations(args: argparse.Namespace) -> None:
+    """
+    'citations' command:
+    - Load the movies dataset and set up HybridSearch.
+    - Perform an RRF search with the provided query.
+    - Use Gemini to answer the query with inline citations.
+    - Print search results and the LLM answer.
+    """
+    query = args.query
+    limit = args.limit
+
+    logger.info(
+        "citations command starting",
+        extra={
+            "query": query,
+            "limit": limit,
+        },
+    )
+
+    # Set up HybridSearch using the movies dataset + default DB path
+    hs = HybridSearch(docs_path=None, db_path=DEFAULT_DB_PATH)
+    try:
+        hits = hs.rrf_search(
+            query=query,
+            k=60,
+            limit=limit,
+            rerank_method=None,
+        )
+    finally:
+        hs.close()
+
+    if not hits:
+        print("No search results found.")
+        return
+
+    # Prepare titles for printing
+    titles = [str(h.get("title", "")).strip() for h in hits if h.get("title")]
+    logger.debug(
+        "citations search results titles: %s",
+        titles,
+    )
+
+    # Prepare a documents string for the LLM.
+    # Pattern: numbered sources [1], [2], etc. to line up with citations.
+    documents_lines = []
+    for idx, h in enumerate(hits, start=1):
+        title = str(h.get("title", "")).strip()
+        desc = str(h.get("description", h.get("document", ""))).strip()
+        documents_lines.append(f"[{idx}] {title}: {desc}")
+    documents_str = "\n".join(documents_lines)
+
+    # Call Gemini to generate an answer with citations
+    gi = Gemini()
+    answer = gi.answer_with_citations(query, documents_str)
+
+    # Print in requested format
+    print("Search Results:")
+    for t in titles:
+        print(f"  - {t}")
+    print()
+    print("LLM Answer:")
+    print(answer)
+
+
+def handle_summarize(args: argparse.Namespace):
+    """
+    Summarize command:
+    - Load movies search via HybridSearch.
+    - Perform RRF search with the given query.
+    - Ask Gemini to summarize the results.
+    - Print search results and the LLM summary.
+    """
+    query = args.query
+    limit = args.limit
+
+    logger.info(
+        "summarize command starting",
+        extra={
+            "query": query,
+            "limit": limit,
+        },
+    )
+
+    # Set up HybridSearch using the existing DB
+    hs = HybridSearch(docs_path=None, db_path=DEFAULT_DB_PATH)
+    try:
+        hits = hs.rrf_search(
+            query=query,
+            k=60,
+            limit=limit,
+            rerank_method=None,
+        )
+    finally:
+        hs.close()
+
+    if not hits:
+        print("No search results found.")
+        return
+
+    # Prepare titles for printing
+    titles = [str(h.get("title", "")).strip() for h in hits if h.get("title")]
+    logger.debug(
+        "summarize search results titles: %s",
+        titles,
+    )
+
+    # Prepare rich results string for the LLM
+    results_lines = []
+    for h in hits:
+        title = str(h.get("title", "")).strip()
+        desc = str(h.get("description", h.get("document", ""))).strip()
+        results_lines.append(f"- {title}: {desc}")
+    results_str = "\n".join(results_lines)
+
+    # Call Gemini to summarize results
+    gi = Gemini()
+    summary = gi.summarize_results(query, results_str)
+
+    # Print in requested format
+    print("Search Results:")
+    for t in titles:
+        print(f"  - {t}")
+    print()
+    print("LLM Summary:")
+    print(summary)
+
+
 def handle_hybrid_weight(args: argparse.Namespace):
     hs = HybridSearch(
         docs_path=None,
@@ -20,6 +211,52 @@ def handle_hybrid_weight(args: argparse.Namespace):
     for h in hits:
         print(f"{h['score']:.4f}  {h['title']}")
     hs.close()
+
+
+def handle_rag(args: argparse.Namespace):
+    """
+    RAG-style command:
+    - Run RRF search over movies for the query.
+    - Take top 5 results.
+    - Ask Gemini to answer based on those documents.
+    - Print search results and the generated answer.
+    """
+    query = args.query
+
+    # RRF search over existing DB
+    hs = HybridSearch(docs_path=None, db_path=DEFAULT_DB_PATH)
+    try:
+        hits = hs.rrf_search(
+            query=query,
+            k=60,
+            limit=5,
+            rerank_method=None,  # pure RRF; adjust if you ever want cross_encoder here
+        )
+    finally:
+        hs.close()
+
+    # Extract titles for display
+    titles = [str(h.get("title", "")).strip() for h in hits if h.get("title")]
+
+    # Build a docs string for the LLM (include titles + descriptions)
+    docs_lines = []
+    for h in hits:
+        title = str(h.get("title", "")).strip()
+        desc = str(h.get("description", h.get("document", ""))).strip()
+        docs_lines.append(f"- {title}: {desc}")
+    docs_str = "\n".join(docs_lines)
+
+    # Call Gemini RAG helper
+    gi = Gemini()
+    answer = gi.rag_answer(query, docs_str)
+
+    # Print in the requested format
+    print("Search Results:")
+    for t in titles:
+        print(f"  - {t}")
+    print()
+    print("RAG Response:")
+    print(answer)
 
 
 def handle_hybrid_rrf(args: argparse.Namespace):
@@ -279,11 +516,77 @@ def make_parser() -> argparse.ArgumentParser:
         help="rerank results with Gemini",
     )  # attach handler
     build_rrf.add_argument(
-    "--evaluate",
-    action="store_true",
-    help="Use an LLM to rate each result from 0-3 for relevance",
+        "--evaluate",
+        action="store_true",
+        help="Use an LLM to rate each result from 0-3 for relevance",
     )
     build_rrf.set_defaults(func=handle_hybrid_rrf)
+    # ________________________________________________________________________________
+    # _______________________________rag parser_______________________________________
+    # ________________________________________________________________________________
+
+    build_rag = subparsers.add_parser("rag", help="RAG-style answer using RRF + Gemini")
+    build_rag.add_argument("query", type=str, help="Search query")
+    build_rag.set_defaults(func=handle_rag)
+
+    # ________________________________________________________________________________
+    # _______________________________rag summarize____________________________________
+    # ________________________________________________________________________________
+    build_summary = subparsers.add_parser(
+        "summarize",
+        help="Summarize top search results for a query using RRF + Gemini",
+    )
+    build_summary.add_argument(
+        "query",
+        type=str,
+        help="Search query to summarize results for",
+    )
+    build_summary.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Number of top results to retrieve and summarize (default: 5)",
+    )
+    build_summary.set_defaults(func=handle_summarize)
+    # ________________________________________________________________________________
+    # _______________________________rag summarize____________________________________
+    # ________________________________________________________________________________
+    build_summary = subparsers.add_parser(
+        "citations",
+        help="Answer a query with citations based on RRF search results",
+    )
+    build_summary.add_argument(
+        "query",
+        type=str,
+        help="Search query to answer with citations",
+    )
+    build_summary.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Number of top results to retrieve (default: 5)",
+    )
+    build_summary.set_defaults(func=handle_citations)
+    # ________________________________________________________________________________
+    # _______________________________rag question/answer______________________________
+    # ________________________________________________________________________________
+    build_quesiton = subparsers.add_parser(
+        "question",
+        help="Ask a natural-language question answered using movie search results",
+    )
+    build_quesiton.add_argument(
+        "question",
+        type=str,
+        help="User question to answer based on Hoopla movie catalog",
+    )
+    build_quesiton.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Number of top results to retrieve (default: 5)",
+    )
+    build_quesiton.set_defaults(func=handle_question)
+
     return parser
 
 

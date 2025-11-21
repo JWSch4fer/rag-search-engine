@@ -12,6 +12,10 @@ from google.genai import errors as genai_errors  # type: ignore[import]
 from rag_search_engine.llm.prompt import (
     gemini_evaluation,
     gemini_method,
+    gemini_rag_answer,
+    gemini_rag_basic,
+    gemini_rag_citations,
+    gemini_rag_summarize,
     gemini_reranking,
 )
 
@@ -495,3 +499,344 @@ class Gemini:
             # scores stays as all zeros
 
         return scores
+
+    def rag_answer(self, query: str, docs: str) -> str:
+        """
+        Use Gemini to generate an answer based on the query and retrieved documents.
+
+        The answer should be tailored to Hoopla users (a movie streaming service).
+        """
+        # Build the prompt in your preferred incremental style
+        prompt = gemini_rag_basic(query, docs)
+        # Log at the start
+        logger.info(
+            "Gemini rag_answer starting",
+            extra={
+                "model": self.model_name,
+                "query_preview": query[:100],
+            },
+        )
+        logger.debug(
+            "rag_answer prompt preview: %s",
+            prompt[:2000],  # avoid spamming logs with giant prompts
+        )
+        logger.debug(
+            "rag_answer docs preview: %s",
+            docs[:2000],
+        )
+
+        start_time = time.perf_counter()
+        answer: str = ""
+
+        try:
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                ),
+                context={
+                    "kind": "rag_answer",
+                    "model": self.model_name,
+                },
+            )
+
+            answer = getattr(response, "text", "").strip()
+
+            duration_s = time.perf_counter() - start_time
+            usage = getattr(response, "usage_metadata", None)
+            prompt_tokens = getattr(usage, "prompt_token_count", None)
+            response_tokens = getattr(usage, "candidates_token_count", None)
+            total_tokens = getattr(usage, "total_token_count", None)
+
+            logger.debug(
+                "rag_answer answer preview: %s",
+                answer[:500],
+            )
+
+            logger.info(
+                "Gemini rag_answer completed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "prompt_tokens": prompt_tokens,
+                    "response_tokens": response_tokens,
+                    "total_tokens": total_tokens,
+                    "query_preview": query[:100],
+                    "success": True,
+                },
+            )
+
+        except Exception:
+            duration_s = time.perf_counter() - start_time
+            logger.exception(
+                "Gemini rag_answer failed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "query_preview": query[:100],
+                    "success": False,
+                },
+            )
+            # fall back to a simple message if needed
+            answer = "Sorry, I couldn't generate an answer at this time."
+
+        return answer
+
+    def summarize_results(self, query: str, docs: str) -> str:
+        """
+        Use Gemini to summarize multiple search results for a given query.
+
+        The summary should be:
+        - useful to Hoopla users (a movie streaming service),
+        - information-dense and concise,
+        - 3–4 sentences combining information from multiple movies.
+        """
+        # Build the prompt in incremental style
+        prompt = gemini_rag_summarize(query, docs)
+        # Logging at start
+        logger.info(
+            "Gemini summarize_results starting",
+            extra={
+                "model": self.model_name,
+                "query_preview": query[:100],
+            },
+        )
+        logger.debug(
+            "summarize_results prompt preview: %s",
+            prompt[:2000],
+        )
+        logger.debug(
+            "summarize_results results preview: %s",
+            docs[:2000],
+        )
+
+        start_time = time.perf_counter()
+        summary: str = ""
+
+        try:
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                ),
+                context={
+                    "kind": "summarize_results",
+                    "model": self.model_name,
+                },
+            )
+
+            summary = getattr(response, "text", "").strip()
+
+            duration_s = time.perf_counter() - start_time
+            usage = getattr(response, "usage_metadata", None)
+            prompt_tokens = getattr(usage, "prompt_token_count", None)
+            response_tokens = getattr(usage, "candidates_token_count", None)
+            total_tokens = getattr(usage, "total_token_count", None)
+
+            logger.debug(
+                "summarize_results answer preview: %s",
+                summary[:500],
+            )
+
+            logger.info(
+                "Gemini summarize_results completed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "prompt_tokens": prompt_tokens,
+                    "response_tokens": response_tokens,
+                    "total_tokens": total_tokens,
+                    "query_preview": query[:100],
+                    "success": True,
+                },
+            )
+
+        except Exception:
+            duration_s = time.perf_counter() - start_time
+            logger.exception(
+                "Gemini summarize_results failed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "query_preview": query[:100],
+                    "success": False,
+                },
+            )
+            summary = (
+                "Sorry, I couldn't generate a summary at this time. "
+                "Please try modifying your query or trying again later."
+            )
+
+        return summary
+
+    def answer_with_citations(self, query: str, docs: str) -> str:
+        """
+        Use Gemini to answer a query based on retrieved documents and include
+        inline citations like [1], [2], etc.
+        """
+        # Build the prompt incrementally in your preferred style
+        prompt = gemini_rag_citations(query, docs)
+        # Log start
+        logger.info(
+            "Gemini answer_with_citations starting",
+            extra={
+                "model": self.model_name,
+                "query_preview": query[:100],
+            },
+        )
+        logger.debug(
+            "answer_with_citations prompt preview: %s",
+            prompt[:2000],
+        )
+        logger.debug(
+            "answer_with_citations documents preview: %s",
+            docs[:2000],
+        )
+
+        start_time = time.perf_counter()
+        answer: str = ""
+
+        try:
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                ),
+                context={
+                    "kind": "answer_with_citations",
+                    "model": self.model_name,
+                },
+            )
+
+            answer = getattr(response, "text", "").strip()
+
+            duration_s = time.perf_counter() - start_time
+            usage = getattr(response, "usage_metadata", None)
+            prompt_tokens = getattr(usage, "prompt_token_count", None)
+            response_tokens = getattr(usage, "candidates_token_count", None)
+            total_tokens = getattr(usage, "total_token_count", None)
+
+            logger.debug(
+                "answer_with_citations answer preview: %s",
+                answer[:500],
+            )
+
+            logger.info(
+                "Gemini answer_with_citations completed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "prompt_tokens": prompt_tokens,
+                    "response_tokens": response_tokens,
+                    "total_tokens": total_tokens,
+                    "query_preview": query[:100],
+                    "success": True,
+                },
+            )
+
+        except Exception:
+            duration_s = time.perf_counter() - start_time
+            logger.exception(
+                "Gemini answer_with_citations failed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "query_preview": query[:100],
+                    "success": False,
+                },
+            )
+            answer = (
+                "Sorry, I couldn't generate a citation-backed answer at this time. "
+                "Please try again later."
+            )
+
+        return answer
+
+    def answer_question(self, question: str, context: str) -> str:
+        """
+        Use Gemini to answer a user's question based on movie search results.
+
+        The answer should be:
+        - direct and concise
+        - casual and conversational
+        - not cringe or hype-y
+        - like a normal chat reply for Hoopla users.
+        """
+        # Build the prompt incrementally
+        prompt = gemini_rag_answer(question, context)
+        # Log start
+        logger.info(
+            "Gemini answer_question starting",
+            extra={
+                "model": self.model_name,
+                "question_preview": question[:100],
+            },
+        )
+        logger.debug(
+            "answer_question prompt preview: %s",
+            prompt[:2000],
+        )
+        logger.debug(
+            "answer_question context preview: %s",
+            context[:2000],
+        )
+
+        start_time = time.perf_counter()
+        answer: str = ""
+
+        try:
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                ),
+                context={
+                    "kind": "answer_question",
+                    "model": self.model_name,
+                },
+            )
+
+            answer = getattr(response, "text", "").strip()
+
+            duration_s = time.perf_counter() - start_time
+            usage = getattr(response, "usage_metadata", None)
+            prompt_tokens = getattr(usage, "prompt_token_count", None)
+            response_tokens = getattr(usage, "candidates_token_count", None)
+            total_tokens = getattr(usage, "total_token_count", None)
+
+            logger.debug(
+                "answer_question answer preview: %s",
+                answer[:500],
+            )
+
+            logger.info(
+                "Gemini answer_question completed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "prompt_tokens": prompt_tokens,
+                    "response_tokens": response_tokens,
+                    "total_tokens": total_tokens,
+                    "question_preview": question[:100],
+                    "success": True,
+                },
+            )
+
+        except Exception:
+            duration_s = time.perf_counter() - start_time
+            logger.exception(
+                "Gemini answer_question failed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "question_preview": question[:100],
+                    "success": False,
+                },
+            )
+            answer = (
+                "Sorry, I couldn't generate an answer right now. "
+                "Please try again in a bit."
+            )
+
+        return answer
+

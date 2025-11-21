@@ -92,3 +92,22 @@ def gemini_reranking(
             return BATCH
         case _:
             return ""
+
+
+def gemini_evaluation(query: str, formatted_results: List[str]) -> str:
+    EVALUATION = "Rate how relevant each result is to this query on a 0-3 scale:\n\n"
+    EVALUATION += f"Query: {query}\n\n"
+    EVALUATION += "Results:\n"
+    EVALUATION += "\n".join(formatted_results) + "\n\n"
+    EVALUATION += "Scale:\n"
+    EVALUATION += "- 3: Highly relevant\n"
+    EVALUATION += "- 2: Relevant\n"
+    EVALUATION += "- 1: Marginally relevant\n"
+    EVALUATION += "- 0: Not relevant\n\n"
+    EVALUATION += "Do NOT give any numbers out than 0, 1, 2, or 3.\n\n"
+    EVALUATION += (
+        "Return ONLY the scores in the same order you were given the documents. "
+    )
+    EVALUATION += "Return a valid JSON list, nothing else. For example:\n\n"
+    EVALUATION += "[2, 0, 3, 2, 0, 1]"
+    return EVALUATION

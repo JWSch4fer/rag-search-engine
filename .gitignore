@@ -10,6 +10,5 @@ wheels/
 .venv
 
 # Project files
-data/
 rag_search_engine/cache
 .env

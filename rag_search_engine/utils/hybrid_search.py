@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set
 import time, logging
+from sentence_transformers import CrossEncoder
 
 from rag_search_engine.utils.basesearch_db import DEFAULT_DB_PATH
 from rag_search_engine.utils.keyword_search import KeywordSearch
@@ -205,6 +206,14 @@ class HybridSearch:
             "sem_rank":    <rank or None>,
           }
         """
+        logger.debug(
+            "RRF search starting: query=%r, k=%d, limit=%d, rerank_method=%r",
+            query,
+            k,
+            limit,
+            rerank_method,
+        )
+
         # ---------------- BM25 ---------------- #
         bm25_hits = self._bm25_search(query=query, limit=limit)
         # Sort by BM25 score descending
@@ -261,6 +270,46 @@ class HybridSearch:
             )
 
         results.sort(key=lambda r: r["score"], reverse=True)
+        logger.debug(
+            "RRF base results (pre-rerank, top %d): %s",
+            len(results),
+            results,
+        )
+        # ---------------- cross-encoder rerank ---------------- #
+        if rerank_method == "cross_encoder":
+            logger.info(
+                "Reranking top %d results using CrossEncoder 'cross-encoder/ms-marco-TinyBERT-L2-v2'",
+                limit,
+            )
+
+            # Record original RRF rank and build [query, doc_text] pairs
+            pairs = []
+            for idx, doc in enumerate(results, start=1):
+                doc["rrf_rank"] = idx
+                doc_text = (
+                    f"{doc.get('title', '')} - "
+                    f"{doc.get('document') or doc.get('description', '')}"
+                )
+                pairs.append([query, doc_text])
+
+            if pairs:
+                cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
+                scores = cross_encoder.predict(pairs)
+                for doc, score in zip(results, scores):
+                    doc["cross_encoder_score"] = float(score)
+
+                # Sort by cross-encoder score (desc), break ties with RRF score
+                results.sort(
+                    key=lambda d: (d.get("cross_encoder_score", 0.0), d["score"]),
+                    reverse=True,
+                )
+            logger.debug(
+                "RRF cross_encoder final results (top %d): %s",
+                len(results),
+                results,
+            )
+
+            return results[:limit]
 
         # ---------------- LLM-based individual reranking ---------------- #
         if rerank_method == "individual":
@@ -282,6 +331,12 @@ class HybridSearch:
                 key=lambda r: (r.get("rerank_score", 0.0), r["score"]),
                 reverse=True,
             )
+            logger.debug(
+                "RRF individual rerank final results (top %d): %s",
+                len(results),
+                results,
+            )
+            return results[:limit]
 
         # ---------------- batch rerank ---------------- #
         if rerank_method == "batch":
@@ -304,10 +359,23 @@ class HybridSearch:
                     r.get("rerank_rank") or 1e9,
                 )
             )
+            logger.debug(
+                "RRF batch rerank final results (top %d): %s",
+                len(results),
+                results,
+            )
             return results[:limit]
 
-        # Unknown method → fallback
-        logger.warning("Unknown rerank_method=%r, using base RRF only", rerank_method)
+        # ---------------- No / unknown rerank method ---------------- #
+        if rerank_method is not None:
+            logger.warning(
+                "Unknown rerank_method=%r, using base RRF only", rerank_method
+            )
+        logger.debug(
+            "RRF final results (no rerank, top %d): %s",
+            len(results),
+            results,
+        )
         return results[:limit]
 
     # ---------------- Cleanup ---------------- #

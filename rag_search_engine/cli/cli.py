@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 import argparse, logging
-from sentence_transformers import CrossEncoder
 
 from rag_search_engine.llm.gemini import Gemini
 from rag_search_engine.utils.semantic_search import SemanticSearch
 from rag_search_engine.utils.keyword_search import KeywordSearch
 from rag_search_engine.utils.hybrid_search import HybridSearch
 from rag_search_engine.config import DEFAULT_DB_PATH
+
+logger = logging.getLogger(__name__)
 
 
 def handle_hybrid_weight(args: argparse.Namespace):
@@ -22,9 +23,19 @@ def handle_hybrid_weight(args: argparse.Namespace):
 
 
 def handle_hybrid_rrf(args: argparse.Namespace):
+    # Log the original query before any enhancement
+    logger.debug("RRF search CLI: original query=%r", args.query)
+
     # Enhance the query first (no-op if enhance is None)
     gi = Gemini()
     query = gi.enhance(args.enhance, args.query)
+
+    # Log the enhanced query
+    logger.debug(
+        "RRF search CLI: enhanced query=%r using method=%r",
+        query,
+        args.enhance,
+    )
 
     # When using any rerank method, gather more candidates for stronger reranking
     gather_limit = args.limit * 2 if args.rerank_method else args.limit
@@ -36,88 +47,67 @@ def handle_hybrid_rrf(args: argparse.Namespace):
 
     print(f"Enhanced query ({args.enhance}): '{args.query}' -> '{query}'\n")
 
-    # ---------------- Gemini-based reranking inside HybridSearch ---------------- #
-    if args.rerank_method in ("individual", "batch"):
-        hits = hs.rrf_search(
-            query,
-            k=args.k,
-            limit=gather_limit,
-            rerank_method=args.rerank_method,
-        )
-        # Show only the top `limit` after reranking
+    # Let HybridSearch handle all reranking logic, including cross_encoder
+    hits = hs.rrf_search(
+        query,
+        k=args.k,
+        limit=gather_limit,
+        rerank_method=args.rerank_method,
+    )
+
+    # If we did any reranking, only show the top user-specified limit
+    if args.rerank_method in ("individual", "batch", "cross_encoder"):
         hits = hits[: args.limit]
 
         for i, doc in enumerate(hits, start=1):
             line = f"{i}. {doc['title']}"
-            if "rerank_score" in doc:
+
+            # LLM (Gemini) individual/batch rerank score
+            if args.rerank_method in ("individual", "batch") and "rerank_score" in doc:
                 line += f"\n   Rerank Score: {doc['rerank_score']:.3f}/10"
-            line += f"\n   RRF Score: {doc['score']:.3f}"
+
+            # Cross-encoder score if present
+            if args.rerank_method == "cross_encoder" and "cross_encoder_score" in doc:
+                line += f"\n   Cross-Encoder Score: {doc['cross_encoder_score']:.4f}"
+
+            # RRF + underlying ranks (these should be set in HybridSearch)
+            if "score" in doc:
+                line += f"\n   RRF Score: {doc['score']:.4f}"
+            if "rrf_rank" in doc:
+                line += f"\n   RRF Rank: {doc['rrf_rank']}"
             line += (
                 f"\n   BM25 Rank: {doc.get('bm25_rank')}, "
                 f"Semantic Rank: {doc.get('sem_rank')}"
             )
+
             line += f"\n   {doc.get('description', '')[:80]}..."
             print(line)
             print()
 
-    # ---------------- Cross-encoder reranking ---------------- #
-    elif args.rerank_method == "cross_encoder":
-        # First, get base RRF results (no LLM reranking in HybridSearch)
-        hits = hs.rrf_search(
-            query,
-            k=args.k,
-            limit=gather_limit,
-            rerank_method=None,
-        )
-
-        # Build [query, document] pairs and track original RRF rank
-        pairs = []
-        for rank, doc in enumerate(hits, start=1):
-            doc["rrf_rank"] = rank
-            # Support both "document" and "description" keys
-            doc_text = f"{doc.get('title', '')} - {doc.get('document') or doc.get('description', '')}"
-            pairs.append([query, doc_text])
-
-        if pairs:
-            cross_encoder = CrossEncoder("cross-encoder/ms-marco-TinyBERT-L2-v2")
-            scores = cross_encoder.predict(pairs)
-            for doc, score in zip(hits, scores):
-                doc["cross_encoder_score"] = float(score)
-
-            # Sort by cross-encoder score (desc)
-            hits.sort(
-                key=lambda d: d.get("cross_encoder_score", 0.0),
-                reverse=True,
-            )
-
-        # Truncate to the desired limit for display
-        hits = hits[: args.limit]
-
-        for i, doc in enumerate(hits, start=1):
-            line = f"{i}. {doc['title']}"
-            line += (
-                f"\n   Cross-Encoder Score: {doc.get('cross_encoder_score', 0.0):.4f}"
-            )
-            line += f"\n   RRF Rank: {doc.get('rrf_rank')}"
-            line += f"\n   RRF Score: {doc['score']:.4f}"
-            line += (
-                f"\n   BM25 Rank: {doc.get('bm25_rank')}, "
-                f"Semantic Rank: {doc.get('sem_rank')}"
-            )
-            line += f"\n   {doc.get('description', '')[:80]}..."
-            print(line)
-            print()
-
-    # ---------------- No reranking: plain RRF scores ---------------- #
     else:
-        hits = hs.rrf_search(
-            query,
-            k=args.k,
-            limit=args.limit,
-            rerank_method=None,
-        )
-        for h in hits:
+        # No reranking: just print the base RRF results
+        for h in hits[: args.limit]:
             print(f"{h['score']:.4f}  {h['title']}")
+
+        # ----- Optional LLM evaluation (0–3) -----
+    if args.evaluate and hits:
+        # Prepare docs for evaluation: only title / description are needed
+        eval_docs = [
+            {
+                "title": d.get("title", ""),
+                "description": d.get("description", d.get("document", "")),
+            }
+            for d in hits
+        ]
+
+        scores = gi.evaluate_results(query, eval_docs)
+
+        # Pair scores with results and print the final evaluation report
+        print()  # blank line to separate from search results
+        for idx, (doc, score) in enumerate(zip(hits, scores), start=1):
+            # Clamp to valid range just in case
+            s = max(0, min(3, int(score)))
+            print(f"{idx}. {doc.get('title', '')}: {s}/3")
 
     hs.close()
 
@@ -177,6 +167,11 @@ def make_parser() -> argparse.ArgumentParser:
         "--force",
         action="store_true",
         help="Rebuild cache even if a cached index is present",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
     )
     # attach handler
     build_p.set_defaults(func=handle_build)
@@ -283,21 +278,33 @@ def make_parser() -> argparse.ArgumentParser:
         default=None,
         help="rerank results with Gemini",
     )  # attach handler
+    build_rrf.add_argument(
+    "--evaluate",
+    action="store_true",
+    help="Use an LLM to rate each result from 0-3 for relevance",
+    )
     build_rrf.set_defaults(func=handle_hybrid_rrf)
     return parser
 
 
-def setup_logging() -> None:
+def setup_logging(debug: bool = False) -> None:
+    """
+    Configure root logging.
+
+    If `debug` is True, set level to DEBUG; otherwise INFO.
+    """
+    level = logging.DEBUG if debug else logging.INFO
     logging.basicConfig(
-        level=logging.INFO,
+        level=level,
         format="%(asctime)s %(name)s [%(levelname)s] %(message)s",
     )
+    logger.setLevel(level)
 
 
 def main() -> None:
-    setup_logging()
     parser = make_parser()
     args = parser.parse_args()
+    setup_logging(debug=args.debug)
     args.func(args)
 
 

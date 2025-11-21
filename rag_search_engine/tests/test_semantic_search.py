@@ -38,7 +38,7 @@ class DummyModel:
     def get_sentence_embedding_dimension(self) -> int:
         return self._dim
 
-    def encode(self, texts, show_progress_bar=True):
+    def encode(self, texts, show_progress_bar=False):
         # deterministic small vectors
         return np.ones((len(texts), self._dim), dtype="float32")
 

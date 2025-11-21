@@ -9,7 +9,11 @@ from rag_search_engine.config import GEMINI_API_KEY
 from google import genai
 from google.genai import errors as genai_errors  # type: ignore[import]
 
-from rag_search_engine.llm.prompt import gemini_method, gemini_reranking
+from rag_search_engine.llm.prompt import (
+    gemini_evaluation,
+    gemini_method,
+    gemini_reranking,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -378,3 +382,116 @@ class Gemini:
             return []
 
         return ranked_ids
+
+    def evaluate_results(
+        self,
+        query: str,
+        docs: List[Dict[str, Any]],
+    ) -> List[int]:
+        """
+        Use the LLM to rate each result from 0–3 for relevance to the query.
+
+        Scale:
+        - 3: Highly relevant
+        - 2: Relevant
+        - 1: Marginally relevant
+        - 0: Not relevant
+
+        Returns:
+            List of integer scores (0–3), same length as `docs`. Any parsing
+            or API failure results in default score 0.
+        """
+        if not docs:
+            return []
+
+        # Format each result as a single line:
+        # "1. Title - Description"
+        formatted_results = []
+        for idx, d in enumerate(docs, start=1):
+            title = str(d.get("title", "")).strip()
+            desc = str(d.get("description", d.get("document", ""))).strip()
+            formatted_results.append(f"{idx}. {title} - {desc}")
+
+        prompt: str = gemini_evaluation(query, formatted_results)
+
+        start_time = time.perf_counter()
+        scores: List[int] = [0] * len(docs)
+
+        try:
+            response = self._generate_with_retry(
+                lambda: self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                ),
+                context={
+                    "kind": "evaluate_results",
+                    "model": self.model_name,
+                    "num_docs": len(docs),
+                },
+            )
+
+            raw_text = getattr(response, "text", "").strip()
+
+            # Try direct JSON parse
+            try:
+                parsed = json.loads(raw_text)
+            except json.JSONDecodeError:
+                # Fallback: extract the first [...] region
+                start = raw_text.find("[")
+                end = raw_text.rfind("]")
+                if start != -1 and end != -1 and end > start:
+                    snippet = raw_text[start : end + 1]
+                    parsed = json.loads(snippet)
+                else:
+                    raise
+
+            if not isinstance(parsed, list):
+                raise ValueError("LLM returned non-list JSON for evaluate_results")
+
+            # Map parsed values to int scores 0–3, align with docs length
+            for i in range(len(docs)):
+                try:
+                    raw_val = parsed[i]
+                except IndexError:
+                    break
+                try:
+                    val = int(raw_val)
+                except (TypeError, ValueError):
+                    val = 0
+                scores[i] = max(0, min(3, val))
+
+            duration_s = time.perf_counter() - start_time
+            usage = getattr(response, "usage_metadata", None)
+            prompt_tokens = getattr(usage, "prompt_token_count", None)
+            response_tokens = getattr(usage, "candidates_token_count", None)
+            total_tokens = getattr(usage, "total_token_count", None)
+
+            logger.info(
+                "Gemini evaluate_results completed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "prompt_tokens": prompt_tokens,
+                    "response_tokens": response_tokens,
+                    "total_tokens": total_tokens,
+                    "query_preview": query[:100],
+                    "num_docs": len(docs),
+                    "success": True,
+                },
+            )
+
+        except Exception:
+            duration_s = time.perf_counter() - start_time
+            logger.exception(
+                "Gemini evaluate_results failed",
+                extra={
+                    "model": self.model_name,
+                    "duration_s": duration_s,
+                    "query_preview": query[:100],
+                    "num_docs": len(docs),
+                    "success": False,
+                },
+            )
+            # scores stays as all zeros
+
+        return scores
